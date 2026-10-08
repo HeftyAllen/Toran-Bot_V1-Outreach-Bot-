@@ -37,6 +37,7 @@ export async function POST(request: Request) {
       limit: 1,
     });
     const current = rows[0];
+    if (!current) return Response.json({ error: "Your dashboard access has changed. Sign in again." }, { status: 403 });
     const platformUser = await getChatGPTUser();
     if (
       platformUser?.email.trim().toLowerCase() !==
@@ -46,6 +47,7 @@ export async function POST(request: Request) {
     ) {
       if (
         typeof input.currentPassword !== "string" ||
+        input.currentPassword.length > 128 ||
         !(await verifyPassword(
           input.currentPassword,
           current.password_salt,
@@ -59,7 +61,7 @@ export async function POST(request: Request) {
       }
     }
     const hashed = await hashPassword(input.password);
-    await db.patch(
+    const updated = await db.patch(
       "workspace_members",
       { email: `eq.${user.email.trim().toLowerCase()}` },
       {
@@ -67,6 +69,7 @@ export async function POST(request: Request) {
         password_hash: hashed.hash,
       },
     );
+    if (!updated.length) return Response.json({ error: "Your dashboard access has changed. Sign in again." }, { status: 403 });
     await setPasswordSession(user.email.trim().toLowerCase());
     return Response.json({ ok: true });
   } catch {

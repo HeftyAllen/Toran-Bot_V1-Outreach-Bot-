@@ -15,7 +15,8 @@
     "build:cloud-run": "node scripts/build-cloud-run.mjs",
     "start:cloud-run": "node scripts/start-cloud-run.mjs",
     "test:bot": "node --experimental-strip-types --test tests/bot.test.ts",
-    "test:cloud-run": "node tests/cloud-run-smoke.mjs"
+    "test:cloud-run": "node tests/cloud-run-smoke.mjs",
+    "test:auth": "node --experimental-strip-types --test tests/password-hash.test.ts && node tests/password-worker.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

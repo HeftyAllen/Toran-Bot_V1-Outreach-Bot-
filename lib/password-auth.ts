@@ -1,10 +1,10 @@
 import { cookies, headers } from "next/headers";
 import { env } from "@bot1/runtime";
 import type { ChatGPTUser } from "../app/chatgpt-auth";
+export { hashPassword, verifyPassword } from "./password-hash";
 
 const SESSION_COOKIE = "bot1_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
-const PASSWORD_ITERATIONS = 310_000;
 
 function bytesToBase64Url(bytes: Uint8Array) {
   let binary = "";
@@ -43,33 +43,6 @@ async function sha256(value: string) {
 
 export async function hashInviteToken(token: string) {
   return bytesToBase64Url(await sha256(token));
-}
-
-export async function hashPassword(password: string, salt?: string) {
-  const saltBytes = salt ? base64UrlToBytes(salt) : crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt: saltBytes, iterations: PASSWORD_ITERATIONS },
-    key,
-    256,
-  );
-  return { salt: bytesToBase64Url(saltBytes), hash: bytesToBase64Url(new Uint8Array(bits)) };
-}
-
-export async function verifyPassword(password: string, salt: string, expectedHash: string) {
-  const candidate = await hashPassword(password, salt);
-  const left = new TextEncoder().encode(candidate.hash);
-  const right = new TextEncoder().encode(expectedHash);
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index];
-  return difference === 0;
 }
 
 export async function setPasswordSession(email: string) {
