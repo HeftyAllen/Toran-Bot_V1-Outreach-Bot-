@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
-  /* config options here */
+const nodeBuild = process.env.BOT1_NODE_BUILD === "1";
+const config: NextConfig = {
+  output: nodeBuild ? "standalone" : undefined,
+  poweredByHeader: false,
+  typescript: {
+    tsconfigPath: nodeBuild ? "tsconfig.cloud-run.json" : "tsconfig.json",
+  },
 };
-
-export default nextConfig;
+export default config;

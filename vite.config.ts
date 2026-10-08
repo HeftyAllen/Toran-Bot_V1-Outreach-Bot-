@@ -1,4 +1,5 @@
 import vinext from "vinext";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
 import { readExecutionProfile } from "./scripts/execution-profile.mjs";
@@ -52,6 +53,16 @@ export default defineConfig(async ({ command }) => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    resolve: {
+      alias: {
+        "@bot1/runtime": fileURLToPath(
+          new URL("./lib/worker-env.ts", import.meta.url),
+        ),
+        "@bot1/public-fetch": fileURLToPath(
+          new URL("./lib/public-fetch-worker.ts", import.meta.url),
+        ),
+      },
+    },
     server: {
       ...(managedLinux
         ? { host: "0.0.0.0", allowedHosts: ["terminal.local"] }

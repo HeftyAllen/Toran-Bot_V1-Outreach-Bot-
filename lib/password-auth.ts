@@ -1,5 +1,5 @@
 import { cookies, headers } from "next/headers";
-import { env } from "cloudflare:workers";
+import { env } from "@bot1/runtime";
 import type { ChatGPTUser } from "../app/chatgpt-auth";
 
 const SESSION_COOKIE = "bot1_session";

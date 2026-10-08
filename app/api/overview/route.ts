@@ -1,73 +1,96 @@
-import { env } from "cloudflare:workers";
+import { env } from "@bot1/runtime";
 import { getSupabaseDb } from "../../../lib/supabase-db";
 import { requireApiUser } from "../../../lib/server-auth";
-
-export const runtime = "edge";
-
-type SettingsRow = {
-  id: number;
-  brand_name: string;
-  brand_domain: string;
-  target_market: string;
-  target_locations: string;
-  services: string;
-  automation_enabled: boolean;
-  research_limit: number;
-};
-type DataRow = Record<string, unknown>;
-
+import { settingsRow } from "../../../lib/campaigns";
+const camel = (row: Record<string, unknown>) =>
+  Object.fromEntries(
+    Object.entries(row).map(([k, v]) => [
+      k.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+      v,
+    ]),
+  );
 export async function GET() {
   const { user, member, response } = await requireApiUser();
   if (!user || !member) return response;
   try {
     const db = getSupabaseDb();
-    const [settingsRows, leadRows, runRows] = await Promise.all([
-      db.select<SettingsRow>("workspace_settings", { select: "*", id: "eq.1", limit: 1 }),
-      db.select<DataRow>("leads", { select: "*", order: "created_at.desc", limit: 100 }),
-      db.select<DataRow>("runs", { select: "*", order: "created_at.desc", limit: 8 }),
-    ]);
-    const settings = settingsRows[0];
-    if (!settings) throw new Error("Workspace settings are missing.");
-    const leads = leadRows.map((row) => ({
-      id: row.id,
-      companyName: row.company_name,
-      websiteUrl: row.website_url,
-      region: row.region,
-      status: row.status,
-      fitScore: row.fit_score,
-      confidence: row.confidence,
-      serviceFit: row.service_fit,
-      summary: row.summary,
-      evidence: row.evidence,
-      draftSubject: row.draft_subject,
-      draftBody: row.draft_body,
-      discoverySourceUrl: row.discovery_source_url,
-      outcome: row.outcome,
-      createdAt: row.created_at,
-    }));
-    const runs = runRows.map((row) => ({
-      id: row.id,
-      status: row.status,
-      processed: row.processed,
-      message: row.message,
-      createdAt: row.created_at,
-    }));
-    return Response.json({
-      settings: {
-        brandName: settings.brand_name,
-        brandDomain: settings.brand_domain,
-        targetMarket: settings.target_market,
-        targetLocations: settings.target_locations,
-        services: settings.services,
-        automationEnabled: Boolean(settings.automation_enabled),
-        researchLimit: settings.research_limit,
-        apiConfigured: Boolean(env.OPENAI_API_KEY),
-      },
+    const [
+      settings,
       leads,
       runs,
-      role: member.role,
-    }, { headers: { "Cache-Control": "no-store" } });
+      usage,
+      events,
+      feedback,
+      messages,
+      inbound,
+      wa,
+    ] = await Promise.all([
+      settingsRow(),
+      db.select<Record<string, unknown>>("leads", {
+        select: "*",
+        order: "created_at.desc",
+        limit: 1000,
+      }),
+      db.select<Record<string, unknown>>("runs", {
+        select: "*",
+        order: "created_at.desc",
+        limit: 20,
+      }),
+      db.rpc("bot1_usage_summary", {}),
+      db.select("usage_events", {
+        select:
+          "id,run_id,provider,kind,model,state,reserved_usd,cost_usd,input_tokens,output_tokens,search_calls,created_at",
+        order: "created_at.desc",
+        limit: 100,
+      }),
+      db.select("feedback_events", {
+        select: "*",
+        order: "created_at.desc",
+        limit: 1000,
+      }),
+      db.select("outreach_messages", {
+        select: "id,lead_id,kind,template_name,status,error,created_at",
+        order: "created_at.desc",
+        limit: 100,
+      }),
+      db.select("whatsapp_inbound", {
+        select: "id,lead_id,sender,text_body,received_at",
+        order: "received_at.desc",
+        limit: 50,
+      }),
+      db.select("whatsapp_connection", {
+        select: "id,label,phone_number_id,api_version",
+        id: "eq.1",
+        limit: 1,
+      }),
+    ]);
+    return Response.json(
+      {
+        settings: {
+          ...camel(settings as unknown as Record<string, unknown>),
+          apiConfigured: Boolean(env.OPENAI_API_KEY),
+          workerConfigured: Boolean(env.WORKER_SECRET),
+        },
+        leads: leads.map(camel),
+        runs: runs.map((row) => {
+          const { lease_token: _token, ...safe } = row;
+          void _token;
+          return camel(safe);
+        }),
+        usage,
+        usageEvents: events,
+        feedback,
+        messages,
+        inbound,
+        whatsapp: wa[0] ?? null,
+        role: member.role,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch {
-    return Response.json({ error: "Could not load the Bot 1 workspace." }, { status: 503 });
+    return Response.json(
+      { error: "Could not load the workspace. Retry shortly." },
+      { status: 503 },
+    );
   }
 }

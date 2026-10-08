@@ -25,12 +25,19 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@bot1/runtime": [
+        "./lib/worker-env.ts"
+      ],
+      "@bot1/public-fetch": [
+        "./lib/public-fetch-worker.ts"
       ]
     },
     "types": [
       "node",
       "@cloudflare/workers-types"
-    ]
+    ],
+    "allowImportingTsExtensions": true
   },
   "include": [
     "next-env.d.ts",

@@ -1,0 +1,12 @@
+node_modules
+.next
+dist
+.git
+.wrangler
+.sites-runtime
+.dev.vars*
+.env*
+*.tsbuildinfo
+supabase/.temp
+outputs
+work

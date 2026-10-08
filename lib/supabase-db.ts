@@ -1,9 +1,10 @@
-import { env } from "cloudflare:workers";
+import { env } from "@bot1/runtime";
 
 type RuntimeBindings = {
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   SUPABASE_DB_ACCESS_SECRET?: string;
+  SUPABASE_SECRET_KEY?: string;
 };
 
 type QueryValue = string | number;
@@ -24,18 +25,25 @@ export class SupabaseDb {
   private readonly baseUrl: string;
   private readonly publishableKey: string;
   private readonly internalToken: string;
+  private readonly secretMode: boolean;
 
   constructor() {
     const bindings = env as typeof env & RuntimeBindings;
     const url = bindings.SUPABASE_URL?.trim();
-    const publishableKey = bindings.SUPABASE_PUBLISHABLE_KEY?.trim();
+    const serverKey = bindings.SUPABASE_SECRET_KEY?.trim();
+    const publishableKey = serverKey || bindings.SUPABASE_PUBLISHABLE_KEY?.trim();
     const internalToken = bindings.SUPABASE_DB_ACCESS_SECRET?.trim();
-    if (!url || !publishableKey || !internalToken) {
+    if (!url || !publishableKey || (!serverKey && !internalToken)) {
       throw new Error("Supabase database configuration is incomplete.");
     }
     this.baseUrl = url.replace(/\/$/, "");
     this.publishableKey = publishableKey;
-    this.internalToken = internalToken;
+    this.internalToken = internalToken ?? "";
+    this.secretMode = Boolean(serverKey);
+  }
+
+  async rpc<T>(name: string, args: unknown): Promise<T> {
+    return this.request<T>(`rpc/${name}`, "POST", {}, args);
   }
 
   async select<T>(table: string, query: Query): Promise<T[]> {
@@ -90,11 +98,11 @@ export class SupabaseDb {
 
     const headers = new Headers({
       apikey: this.publishableKey,
-      Authorization: `Bearer ${this.publishableKey}`,
-      "x-bot1-internal-token": this.internalToken,
       Accept: "application/json",
       "Cache-Control": "no-store",
     });
+    if (!this.secretMode || this.publishableKey.startsWith("eyJ")) headers.set("Authorization", `Bearer ${this.publishableKey}`);
+    if (this.internalToken) headers.set("x-bot1-internal-token", this.internalToken);
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (prefer) headers.set("Prefer", prefer);
 
