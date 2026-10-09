@@ -102,7 +102,7 @@ try{
   const brandRunResponse=await call('/api/run','POST',{mode:'queue',count:1,budgetUsd:.5,focus:'website_gaps'},'owner@example.test');assert.equal(brandRunResponse.status,202);
   const brandRunId=(await brandRunResponse.json()).id;
   const brandRun=runs.find(x=>x.id===brandRunId);
-  await tick();assert.equal(chain.website_url,'https://restaurant-brand.example.com/','A branch must retain its existing parent-brand website');assert.equal(chain.opportunity.websiteStatus,'unknown');
+  await tick();assert.equal(chain.website_url,'https://locations.syntheticchainrestaurant.co.za/sandton','A branch must retain its retrieved official URL even when the model leaves its website unconfirmed');assert.equal(chain.opportunity.websiteStatus,'unknown');
   await tick();assert.equal(brandRun.status,'complete');assert.equal(brandRun.qualified,0);assert.equal(chain.opportunity.status,'not_fit');assert.equal(chain.draft_body,null);
   const collection={id:'synthetic-collection-lead',company_name:'Synthetic collection restaurant',website_url:null,discovery_source_url:'https://directory.example.com/sandton/restaurants/',region:'Sandton, South Africa',category:'Restaurant',status:'queued',opportunity:null,contact_sources:[]};
   tables.leads.push(collection);

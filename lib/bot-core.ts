@@ -58,8 +58,25 @@ export function officialWebsite(raw: unknown) {
   const url = publicUrl(raw);
   if (!url) return null;
   const host = new URL(url).hostname.replace(/^www\./, "");
-  const platforms = ["facebook.com", "fb.com", "instagram.com", "linkedin.com", "tiktok.com", "twitter.com", "x.com", "youtube.com", "google.com", "google.co.za", "goo.gl", "maps.app.goo.gl", "tripadvisor.com", "tripadvisor.co.za", "restaurantguru.com", "restaurantguru.co.za", "restaurants.co.za", "brabys.com", "sayellow.com", "snupit.co.za", "yelp.com", "eatout.co.za"];
+  const platforms = ["facebook.com", "fb.com", "instagram.com", "linkedin.com", "tiktok.com", "twitter.com", "x.com", "youtube.com", "whatsapp.com", "wa.me", "google.com", "google.co.za", "goo.gl", "maps.app.goo.gl", "tripadvisor.com", "tripadvisor.co.za", "restaurantguru.com", "restaurantguru.co.za", "restaurants.co.za", "brabys.com", "sayellow.com", "snupit.co.za", "yelp.com", "eatout.co.za", "cylex.net.za", "africabizinfo.com", "firmania.co.za"];
   return platforms.some(domain => host === domain || host.endsWith(`.${domain}`)) ? null : url;
+}
+export function officialSourceWebsite(companyName: string, sources: string[]) {
+  const brand = companyName.toLowerCase().replace(/\b(?:pty|ltd|limited|llc|inc)\b/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  // A conservative fallback for an exact business-name domain. Retain the
+  // actual retrieved branch URL, never invent a parent homepage. Arbitrary
+  // subdomains, name-containing paths and suffix lookalikes do not match.
+  if (brand.length < 8) return null;
+  const countrySuffixes = ["co.za", "org.za", "net.za", "co.uk", "org.uk", "com.au", "co.nz"];
+  for (const source of sources) {
+    const url = officialWebsite(source);
+    if (!url) continue;
+    const labels = new URL(url).hostname.split(".");
+    const index = labels.length - (countrySuffixes.includes(labels.slice(-2).join(".")) ? 3 : 2);
+    if (index >= 0 && labels[index].replace(/-/g, "") === brand) return url;
+  }
+  return null;
 }
 export function normalizePhone(raw: string, callingCode = "27"): string | null {
   const clean = raw
@@ -319,7 +336,7 @@ export function verifyDiscovery(candidate: DiscoveredBusiness, sources: string[]
   );
   // A directory can establish the business without establishing an official
   // website. Keep the sourced business and leave that website unconfirmed.
-  return { sourceUrl, websiteUrl: websiteVerified ? website : null };
+  return { sourceUrl, websiteUrl: websiteVerified ? website : officialSourceWebsite(candidate.companyName, retrieved) };
 }
 
 export function discoveryContinues(requested: number, saved: number, rounds: number) {

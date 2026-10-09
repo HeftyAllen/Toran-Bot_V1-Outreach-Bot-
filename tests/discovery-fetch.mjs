@@ -14,6 +14,7 @@ const nice='https://restaurant-nice.example.com/';
 const weak='https://restaurant-weak.example.com/';
 const brand='https://restaurant-brand.example.com/';
 const collection='https://directory.example.com/sandton/restaurants/';
+const brandBranch='https://locations.syntheticchainrestaurant.co.za/sandton';
 const fixtures = new Map([
   [directory,'<h1>Synthetic directory restaurant</h1><p>Restaurant in Sandton, South Africa.</p>'],
   [good,'<title>Synthetic official restaurant</title><meta name="viewport" content="width=device-width"><h1>Synthetic official restaurant</h1><p>View our menu, order online or use our online reservations.</p>'],
@@ -21,13 +22,15 @@ const fixtures = new Map([
   [weak,'<title>Synthetic weak restaurant</title><h1>Synthetic weak restaurant</h1><p>Our website is under construction.</p><a href="tel:+27112345678">Phone</a>'],
   [brand,'<title>Synthetic chain restaurant</title><meta name="viewport" content="width=device-width"><h1>Synthetic chain restaurant</h1><p>Find your local branch and order online with online payments.</p>'],
   [collection,'<title>Restaurants in Sandton</title><h1>Sandton restaurants</h1><h2>Synthetic collection restaurant</h2><p>Other restaurant listings</p>'],
+  [brandBranch,'<title>Synthetic chain restaurant Sandton</title><meta name="viewport" content="width=device-width"><h1>Synthetic chain restaurant</h1><p>Order online with online payments at our Sandton branch.</p>'],
 ]);
 function fixture(raw) { const url=new URL(raw); url.search='';return fixtures.get(url.href); }
-dns.lookup = async (host, options) => host.endsWith('.example.com')
+const syntheticHost = host => host.endsWith('.example.com') || host==='locations.syntheticchainrestaurant.co.za';
+dns.lookup = async (host, options) => syntheticHost(host)
   ? options?.all ? [{address:'93.184.216.34',family:4}] : {address:'93.184.216.34',family:4}
   : originalLookup(host, options);
 https.request = (url, options, callback) => {
-  if (!url.hostname.endsWith('.example.com')) return originalRequest(url,options,callback);
+  if (!syntheticHost(url.hostname)) return originalRequest(url,options,callback);
   assert.ok(fixture(url.href),'Unexpected synthetic website request: '+url.href);
   const request=new EventEmitter();request.setTimeout=()=>request;request.destroy=error=>request.emit('error',error);
   request.end=()=>setImmediate(()=>{
@@ -60,7 +63,7 @@ globalThis.fetch = async (input, init) => {
     assert.match(body.input[0].content[0].text,/parent or franchise brand website/i);
     assert.equal(payload.listing,undefined,'Directory URLs must not bias the official-site query');
     if(payload.name==='Synthetic chain restaurant'){
-      sources=[brand];result={websiteUrl:brand,sourceUrl:brand};
+      sources=[brandBranch];result={websiteUrl:'',sourceUrl:''};
     }else if(payload.name==='Synthetic collection restaurant'){
       sources=[collection];result={websiteUrl:'',sourceUrl:''};
     }else{

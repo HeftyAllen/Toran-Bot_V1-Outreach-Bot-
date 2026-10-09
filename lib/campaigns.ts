@@ -15,6 +15,7 @@ import {
   qualifyOpportunity,
   opportunityScore,
   officialWebsite,
+  officialSourceWebsite,
   searchSources,
   verifyDiscovery,
   visibleText,
@@ -431,7 +432,7 @@ async function lookupOfficialWebsite(job: Job, lead: LeadRow) {
   const result = JSON.parse(outputText(data)) as { websiteUrl: string; sourceUrl: string };
   const sources = searchSources(data);
   const verified = verifyDiscovery({ ...result, companyName: lead.company_name, region: lead.region ?? "", category: lead.category ?? "" }, sources);
-  return { websiteUrl: verified?.websiteUrl ?? null, search: { checkedAt: new Date().toISOString(), sources } };
+  return { websiteUrl: verified?.websiteUrl ?? officialSourceWebsite(lead.company_name, sources), search: { checkedAt: new Date().toISOString(), sources } };
 }
 async function research(job: Job) {
   const index = job.processed + job.failed;

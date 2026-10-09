@@ -12,7 +12,7 @@ import {
   searchSources,
   verifyDiscovery,
   digitalServiceProvider, websiteChecks, qualifyOpportunity, opportunityScore,
-  officialWebsite, extractListingContacts, businessListingIdentity,
+  officialWebsite, extractListingContacts, businessListingIdentity, officialSourceWebsite,
 } from "../lib/bot-core.ts";
 import type { Feedback, OpportunityEvidence } from "../lib/bot-core.ts";
 
@@ -20,7 +20,19 @@ const testUrl = "https://restaurant.example.com/";
 test("social profiles and directories are not treated as standalone business websites", () => {
   assert.equal(officialWebsite("https://www.facebook.com/restaurant"),null);
   assert.equal(officialWebsite("https://restaurantguru.com/restaurant"),null);
+  assert.equal(officialWebsite("https://www.cylex.net.za/company/restaurant.html"),null);
+  assert.equal(officialWebsite("https://www.africabizinfo.com/ZA/restaurant"),null);
+  assert.equal(officialWebsite("https://wa.me/27112345678"),null);
   assert.equal(officialWebsite("https://restaurant.netlify.app/"),"https://restaurant.netlify.app/");
+});
+test("an exact brand-domain source retains its branch URL without inventing a homepage", () => {
+  const branch='https://locations.merchantbrand.co.za/midrand?utm_source=search';
+  assert.equal(officialSourceWebsite('Merchant Brand',[branch]),branch);
+  assert.equal(officialSourceWebsite('Merchant Brand',['https://merchantbrand.co.za.attacker.com/midrand']),null);
+  assert.equal(officialSourceWebsite('Merchant Brand',['https://merchantbrand.attacker.co.za/']),null);
+  assert.equal(officialSourceWebsite('Merchant Brand',['https://directory.example.com/merchantbrand']),null);
+  const source='https://directory.example.com/merchantbrand';
+  assert.equal(verifyDiscovery({companyName:'Merchant Brand',region:'Midrand',category:'Restaurant',sourceUrl:source,websiteUrl:'https://merchantbrand.co.za/'},[source,branch])?.websiteUrl,branch);
 });
 test("directory contacts must belong to the exact named business", () => {
   const html='<footer>Call directory support: 011 999 9999</footer><script type="application/ld+json">'+JSON.stringify({'@graph':[

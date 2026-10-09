@@ -31,6 +31,9 @@ research of rejected candidates as well as successful leads.
   the bot never treats a missing result as proof no website exists.
   A category directory that merely mentions the name stays in review, and
   website status remains unknown until its business page can be verified.
+  If a result supplies an unverified parent homepage, an exact business-name
+  domain in retrieved sources can establish the actual branch URL. Directory
+  profiles, name-containing paths and unrelated domain suffixes cannot do this.
 - Sell: an exact public instruction for manual orders/payments supports a
   potential checkout/order-handling opportunity.
 - Scale: an exact public manual order, booking, appointment or quotation
