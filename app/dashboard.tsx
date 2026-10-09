@@ -33,7 +33,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { calibration, latestFeedback } from "../lib/bot-core";
-import type { ContactSource, Feedback } from "../lib/bot-core";
+import type { ContactSource, Feedback, Opportunity } from "../lib/bot-core";
 type Section =
   | "Overview"
   | "Leads"
@@ -71,6 +71,7 @@ type Lead = {
   lastInboundAt: string | null;
   discoverySourceUrl: string | null;
   researchError: string | null;
+  opportunity: Opportunity | null;
   createdAt: string;
 };
 type Run = {
@@ -80,11 +81,12 @@ type Run = {
   failed: number;
   requested: number;
   discovered: number;
+  qualified: number;
   message: string | null;
   stage: string;
   leadIds: string[];
   createdAt: string;
-  config: { locations?: string; market?: string; budgetUsd?: number };
+  config: { locations?: string; market?: string; budgetUsd?: number; qualificationVersion?: number };
 };
 type Settings = {
   brandName: string;
@@ -263,7 +265,7 @@ export default function Dashboard({
     [busy, setBusy] = useState(false),
     [status, setStatus] = useState(""),
     [query, setQuery] = useState(""),
-    [filter, setFilter] = useState("all"),
+    [filter, setFilter] = useState("qualified"),
     [selectedId, setSelectedId] = useState<string | null>(null),
     [showAdd, setShowAdd] = useState(false),
     [mobileMenu, setMobileMenu] = useState(false),
@@ -395,6 +397,9 @@ export default function Dashboard({
             .toLowerCase()
             .includes(query.toLowerCase()) &&
           (filter === "all" ||
+            (filter === "qualified" && l.opportunity?.status === "qualified") ||
+            (filter === "review" && (!l.opportunity || l.opportunity.status === "review")) ||
+            (filter === "not_fit" && l.opportunity?.status === "not_fit") ||
             (filter === "contacts"
               ? !!(l.phone || l.contactEmail)
               : filter === "suppressed"
@@ -409,6 +414,7 @@ export default function Dashboard({
     ["replied", "booked", "won"].includes(l.outcome ?? ""),
   ).length;
   const researched = leads.filter((l) => l.fitScore !== null).length;
+  const prospects = leads.filter((l) => l.opportunity?.status === "qualified");
   function navigate(next: Section) {
     setSection(next);
     setMobileMenu(false);
@@ -630,10 +636,10 @@ export default function Dashboard({
                           : "PAUSED"}
                       </span>
                     </div>
-                    <h2>Location → leads → contacts</h2>
+                    <h2>Find businesses Toran can help</h2>
                     <p>
-                      Discovers businesses, checks their public pages, saves
-                      verified contact details, and prepares tailored drafts.
+                      Prioritizes weak or missing websites, then checks for
+                      ecommerce and automation opportunities with public evidence.
                     </p>
                   </div>
                 </div>
@@ -683,9 +689,9 @@ export default function Dashboard({
               )}
               <div className="metrics-grid">
                 <Stat
-                  label="Businesses researched"
-                  value={String(researched)}
-                  detail="Saved research with evidence"
+                  label="Qualified Toran prospects"
+                  value={String(prospects.length)}
+                  detail={`${researched} businesses screened · specific opportunity required`}
                   icon={Globe2}
                 />
                 <Stat
@@ -718,7 +724,7 @@ export default function Dashboard({
                     <div>
                       <h2>Fresh prospects</h2>
                       <p>
-                        Open a business to see contacts, sources, and its draft.
+                        Qualified opportunities with contacts, evidence, and a draft.
                       </p>
                     </div>
                     <button
@@ -729,7 +735,7 @@ export default function Dashboard({
                     </button>
                   </div>
                   <LeadList
-                    leads={leads.slice(0, 5)}
+                    leads={prospects.slice(0, 5)}
                     onSelect={setSelectedId}
                   />
                 </div>
@@ -762,6 +768,9 @@ export default function Dashboard({
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                 >
+                  <option value="qualified">Qualified prospects</option>
+                  <option value="review">Needs opportunity review</option>
+                  <option value="not_fit">Ruled out</option>
                   <option value="all">All businesses</option>
                   <option value="contacts">With contacts</option>
                   <option value="ready">Researched</option>
@@ -801,7 +810,7 @@ export default function Dashboard({
               </div>
               <div className="outreach-grid">
                 {leads
-                  .filter((l) => l.draftBody)
+                  .filter((l) => l.draftBody && l.opportunity?.status === "qualified")
                   .slice(0, 60)
                   .map((l) => (
                     <article className="panel draft-card" key={l.id}>
@@ -835,7 +844,7 @@ export default function Dashboard({
                     </article>
                   ))}
               </div>
-              {!leads.some((l) => l.draftBody) && (
+              {!leads.some((l) => l.draftBody && l.opportunity?.status === "qualified") && (
                 <Empty>
                   Start a campaign to prepare tailored outreach drafts.
                 </Empty>
@@ -1086,11 +1095,12 @@ function Empty({ children }: { children: ReactNode }) {
   );
 }
 function Score({ lead }: { lead: Lead }) {
+  const score = lead.opportunity?.version === 2 ? lead.fitScore : null;
   return (
     <span
-      className={`score-chip ${lead.fitScore === null ? "score-unknown" : lead.fitScore >= 75 ? "score-high" : lead.fitScore >= 50 ? "score-mid" : "score-low"}`}
+      className={`score-chip ${score === null ? "score-unknown" : score >= 75 ? "score-high" : score >= 50 ? "score-mid" : "score-low"}`}
     >
-      {lead.fitScore ?? "—"}
+      {score ?? "—"}
       <small>/100</small>
     </span>
   );
@@ -1118,6 +1128,10 @@ function LeadList({
               {l.category ?? l.serviceFit ?? "Research pending"}
             </span>
             <span>
+              {l.opportunity?.status === "qualified" ? `${l.opportunity.service} opportunity · ` : l.opportunity?.status === "not_fit" ? "Ruled out · " : "Needs review · "}
+              {l.opportunity?.websiteStatus === "not_found" ? "Official site not found" : l.opportunity?.websiteStatus === "weak" ? "Website improvement signals" : l.opportunity?.websiteStatus === "healthy" ? "Established website" : "Website not assessed"}
+            </span>
+            <span>
               {l.phone ?? ""}
               {l.phone && l.contactEmail ? " · " : ""}
               {l.contactEmail ??
@@ -1139,7 +1153,7 @@ function LeadList({
       ))}
     </div>
   ) : (
-    <Empty>Your discoveries will appear here with their contact details.</Empty>
+    <Empty>No prospects in this view yet. Start a campaign, or switch the filter to review screened candidates.</Empty>
   );
 }
 function Runs({ runs }: { runs: Run[] }) {
@@ -1156,7 +1170,7 @@ function Runs({ runs }: { runs: Run[] }) {
               {r.config.locations ?? ""} · {date(r.createdAt)} · {r.status}
             </span>
             {r.requested > 0 && (
-              <span>{r.discovered}/{r.requested} new businesses saved · {r.processed} researched · {r.failed} failed</span>
+              <span>{r.config.qualificationVersion === 2 ? `${r.qualified ?? 0}/${r.requested} qualified prospects · ${r.discovered} candidates found · ${r.processed} screened` : `${r.discovered}/${r.requested} businesses saved · ${r.processed} researched`} · {r.failed} failed</span>
             )}
           </div>
         </div>
@@ -1177,7 +1191,7 @@ function RunProgress({
   canManage: boolean;
   onCancel: () => void;
 }) {
-  const done = run.processed + run.failed;
+  const done = run.config.qualificationVersion === 2 ? run.qualified ?? 0 : run.processed + run.failed;
   return (
     <div className="panel campaign-progress" role="status">
       <div>
@@ -1186,8 +1200,7 @@ function RunProgress({
         </span>
         <h3>{run.message}</h3>
         <p>
-          {run.discovered} discovered · {run.processed} researched ·{" "}
-          {run.failed} failed · target {run.requested}
+          {run.qualified ?? 0}/{run.requested} qualified · {run.discovered} candidates · {run.processed} screened · {run.failed} failed
         </p>
         <progress
           aria-label="Research progress"
@@ -1230,6 +1243,7 @@ function CampaignForm({
           count: Number(f.get("count")),
           budgetUsd: Number(f.get("budget")),
           callingCode: f.get("code"),
+          focus: f.get("focus"),
           mode,
         });
       }}
@@ -1237,7 +1251,7 @@ function CampaignForm({
       <div className="panel-heading">
         <div>
           <h2>Build your next lead list</h2>
-          <p>These choices apply to this run. Save defaults in Settings.</p>
+          <p>Find customers for Toran’s Launch, Sell, and Scale services.</p>
         </div>
         <span className="soft-count">1–100 businesses</span>
       </div>
@@ -1263,7 +1277,7 @@ function CampaignForm({
           />
         </label>
         <label>
-          How many businesses?
+          Qualified prospect target
           <input
             name="count"
             type="number"
@@ -1298,6 +1312,14 @@ function CampaignForm({
           <small>For local numbers: 27 = South Africa.</small>
         </label>
         <label>
+          Opportunity focus
+          <select name="focus" defaultValue="all_opportunities">
+            <option value="all_opportunities">Weak/missing sites + Sell/Scale opportunities</option>
+            <option value="website_gaps">Weak or missing websites only</option>
+            <option value="automation">Automation opportunities only</option>
+          </select>
+        </label>
+        <label>
           Work to do
           <select value={mode} onChange={(e) => setMode(e.target.value)}>
             <option value="discover">Discover new businesses</option>
@@ -1307,8 +1329,8 @@ function CampaignForm({
       </div>
       <div className="campaign-start">
         <p>
-          Public sources only · duplicates skipped · budget checked before every
-          paid call. Results may be fewer than your target.
+          Agencies excluded · specific opportunity required · budget checked
+          before every paid call. Screening may return fewer qualified prospects.
         </p>
         <button
           className="button button-primary"
@@ -1410,6 +1432,22 @@ function BusinessDetail({
         </div>
         <Score lead={l} />
       </div>
+      <div className="detail-block">
+        <h3>{l.opportunity?.status === "qualified" ? `${l.opportunity.service} opportunity` : l.opportunity?.status === "not_fit" ? "Ruled out" : "Opportunity needs review"}</h3>
+        <p>{l.opportunity?.reason ?? "This business has not been assessed under Toran’s opportunity rules."}</p>
+        {l.opportunity?.evidence.map((e, i) => (
+          <div key={`${e.url}-${i}`}>
+            <p>{e.observation}</p>
+            <blockquote>{e.quote}</blockquote>
+            <a href={e.url} target="_blank" rel="noreferrer">Checked source <ArrowUpRight size={12} /></a>
+          </div>
+        ))}
+        {l.opportunity?.officialSearch && <p>Official website search checked {date(l.opportunity.officialSearch.checkedAt)}. A missing result is an opportunity to verify with the owner.</p>}
+        <p>Website screening uses fetched HTML and public instructions. Visual quality, speed, hidden systems, and buying intent need further confirmation.</p>
+        {canManage && l.opportunity?.status !== "qualified" && l.status !== "queued" && l.status !== "researching" && (
+          <button className="button button-outline" disabled={busy} onClick={() => void perform(() => onChange({ retry: true }))}>Queue fresh opportunity assessment</button>
+        )}
+      </div>
       {notice && (
         <p role="status" className="auth-message">
           {notice}
@@ -1488,7 +1526,7 @@ function BusinessDetail({
       </details>
       {l.evidence?.length > 0 && (
         <div className="detail-block">
-          <h3>Why this business fits</h3>
+          <h3>Research observations</h3>
           <ul>
             {l.evidence.map((x, i) => (
               <li key={i}>{x}</li>
@@ -1589,7 +1627,7 @@ function BusinessDetail({
           </>
         )}
       </div>
-      {l.draftBody && (
+      {l.draftBody && l.opportunity?.status === "qualified" && (
         <div className="detail-block">
           <h3>Suggested outreach draft</h3>
           <strong>{l.draftSubject}</strong>
@@ -1690,7 +1728,7 @@ function BusinessDetail({
               Reply text
               <textarea
                 name="body"
-                defaultValue={l.draftBody ?? ""}
+                defaultValue={l.opportunity?.status === "qualified" ? l.draftBody ?? "" : ""}
                 maxLength={3000}
                 required
                 rows={4}

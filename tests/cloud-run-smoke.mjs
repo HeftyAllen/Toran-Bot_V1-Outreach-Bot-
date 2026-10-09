@@ -32,7 +32,10 @@ const mock=createServer(async(req,res)=>{const url=new URL(req.url,'http://mock'
       tables.usage_events.push({id,run_id:input.p_run_id,kind:input.p_kind,reserved_usd:input.p_max_usd});rows=id;
     }else rows=[];
   }
-  else{rows=tables[table]??[];if(req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');rows.push({...input,processed:0,failed:0,discovered:0,created_at:new Date().toISOString()});rows=[rows.at(-1)];}else if(req.method==='PATCH'){let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');const id=(url.searchParams.get('id')??'').replace('eq.','');rows=rows.filter(x=>!id||x.id===id);rows.forEach(x=>Object.assign(x,input));}}
+  else{rows=tables[table]??[];if(req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');rows.push({...input,processed:0,failed:0,qualified:0,discovered:0,created_at:new Date().toISOString()});rows=[rows.at(-1)];}else{
+    rows=rows.filter(row=>[...url.searchParams].every(([key,value])=>value.startsWith('eq.')?String(row[key])===value.slice(3):value.startsWith('in.(')?value.slice(4,-1).split(',').includes(row[key]):true));
+    if(req.method==='PATCH'){let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');rows.forEach(x=>Object.assign(x,input));}
+  }}
   res.end(JSON.stringify(rows));
 });
 await new Promise(r=>mock.listen(0,'127.0.0.1',r));const dbPort=mock.address().port;const port=4267;
@@ -78,7 +81,20 @@ try{
   assert.equal(tables.leads.find(x=>x.company_name==='Synthetic directory restaurant').website_url,null,'Unsupported website must not erase a sourced business');
   assert.equal(tables.leads.find(x=>x.company_name==='Synthetic official restaurant').website_url,'https://restaurant-two.example.com/');
   assert.equal(tables.usage_events[2].metadata.discovery.saved,2);assert.equal(tables.usage_events[2].metadata.discovery.unconfirmedWebsites,1);
+  assert.equal(tables.usage_events[2].metadata.discovery.providersExcluded,1,'A service vendor is not an ecommerce customer');
+  await tick();assert.equal(run.qualified,0);assert.ok(tables.leads.find(x=>x.company_name==='Synthetic directory restaurant').opportunity.officialSearch,'Website lookup must persist separately from analysis');
+  await tick();assert.equal(run.qualified,1,'A business-specific search plus listing can establish a missing-site opportunity');
+  assert.equal(tables.leads.find(x=>x.company_name==='Synthetic directory restaurant').opportunity.websiteStatus,'not_found');
+  await tick();assert.equal(run.qualified,1);assert.equal(run.status,'complete','Search bounds may return fewer qualified prospects');
+  const rejected=tables.leads.find(x=>x.company_name==='Synthetic official restaurant');
+  assert.equal(rejected.opportunity.status,'not_fit');assert.equal(rejected.status,'reviewed');assert.equal(rejected.draft_body,null);assert.ok(rejected.fit_score<=15);
   const overview=await (await call('/api/overview','GET',undefined,'owner@example.test')).json();assert.ok(overview.leads.some(x=>x.companyName==='Synthetic directory restaurant'),'Saved discoveries must reach the dashboard API');
-  assert.equal((await call(`/api/run?id=${runId}`,'DELETE',undefined,'owner@example.test')).status,200);assert.equal((await tick()).worked,false);
-  console.log('Cloud Run smoke passed: authentication, invitations, role restrictions, campaign queue/cancel, worker authentication, empty-search retries, verified directory listings, discovery persistence and dashboard results, CSV export. No external calls made.');
+  assert.equal((await tick()).worked,false);
+  const more=await call('/api/run','POST',{count:1,market:'Restaurants',locations:'Sandton, South Africa',budgetUsd:.5,callingCode:'27',focus:'website_gaps'},'owner@example.test');assert.equal(more.status,202);
+  const moreId=(await more.json()).id,moreRun=runs.find(x=>x.id===moreId);
+  await tick();await tick();assert.equal(moreRun.qualified,0);assert.equal(moreRun.status,'running');assert.equal(moreRun.stage,'discover','Rejecting a good site must resume discovery, not fill the prospect target');
+  await tick();await tick();assert.equal(moreRun.qualified,1);assert.equal(moreRun.status,'complete');
+  const qualified=tables.leads.find(x=>x.company_name==='Synthetic weak restaurant');assert.equal(qualified.opportunity.service,'Launch');assert.equal(qualified.opportunity.websiteStatus,'weak');assert.equal(qualified.status,'drafted');assert.ok(qualified.phone);
+  const exported=await (await call('/api/export','GET',undefined,'owner@example.test')).text();assert.ok(exported.includes('opportunity_status'));assert.ok(exported.includes('Synthetic weak restaurant'));
+  console.log('Cloud Run smoke passed: auth/access, campaign controls, bounded empty-search retries, agency exclusions, missing-site lookup, healthy-site rejection, opportunity target continuation, weak-site qualification, saved contacts/drafts and dashboard/CSV results. No external calls made.');
 }finally{child.kill('SIGTERM');mock.close();await new Promise(resolve=>child.once('exit',resolve));}

@@ -150,7 +150,7 @@ export async function PATCH(request: Request) {
       await db.patch(
         "leads",
         { id: `eq.${id}` },
-        { status: "queued", research_error: null },
+        { status: "queued", research_error: null, opportunity: null, draft_subject: null, draft_body: null },
       );
     } else if (typeof input.doNotContact === "boolean") {
       await db.patch(

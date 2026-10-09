@@ -7,6 +7,8 @@ export type CampaignConfig = {
   budgetUsd: number;
   callingCode: string;
   mode: "discover" | "queue";
+  focus?: "website_gaps" | "all_opportunities" | "automation";
+  qualificationVersion?: number;
 };
 export type Feedback = {
   lead_id: string | null;
@@ -51,6 +53,13 @@ export function publicUrl(raw: unknown): string | null {
   } catch {
     return null;
   }
+}
+export function officialWebsite(raw: unknown) {
+  const url = publicUrl(raw);
+  if (!url) return null;
+  const host = new URL(url).hostname.replace(/^www\./, "");
+  const platforms = ["facebook.com", "fb.com", "instagram.com", "linkedin.com", "tiktok.com", "twitter.com", "x.com", "youtube.com", "google.com", "google.co.za", "goo.gl", "maps.app.goo.gl", "tripadvisor.com", "tripadvisor.co.za", "restaurantguru.com", "restaurantguru.co.za", "restaurants.co.za", "brabys.com", "sayellow.com", "snupit.co.za", "yelp.com", "eatout.co.za"];
+  return platforms.some(domain => host === domain || host.endsWith(`.${domain}`)) ? null : url;
 }
 export function normalizePhone(raw: string, callingCode = "27"): string | null {
   const clean = raw
@@ -156,6 +165,37 @@ export function visibleText(html: string) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 18000);
+}
+// A directory's footer phone or another listing's email is not this lead's
+// contact. Only use structured business data with an exact matching name.
+export function extractListingContacts(html: string, url: string, callingCode: string, companyName: string) {
+  const sources: ContactSource[] = [];
+  const nameKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  let visited = 0;
+  function visit(value: unknown) {
+    if (!value || typeof value !== "object" || ++visited > 300) return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const row = value as Record<string, unknown>;
+    if (typeof row.name === "string" && nameKey(row.name) === nameKey(companyName)) {
+      const contactPoints = Array.isArray(row.contactPoint) ? row.contactPoint : [row.contactPoint];
+      for (const contact of [row, ...contactPoints]) {
+        if (!contact || typeof contact !== "object") continue;
+        const c = contact as Record<string, unknown>;
+        if (typeof c.telephone === "string") {
+          const phone = normalizePhone(c.telephone, callingCode);
+          if (phone) sources.push({ field: "phone", value: phone, url });
+        }
+        if (typeof c.email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email))
+          sources.push({ field: "email", value: c.email.toLowerCase(), url });
+      }
+    }
+    Object.values(row).forEach(visit);
+  }
+  for (const script of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try { visit(JSON.parse(script[1])); } catch { /* Invalid directory data is not evidence. */ }
+  }
+  return { email: sources.find(x => x.field === "email")?.value ?? null,
+    phone: sources.find(x => x.field === "phone")?.value ?? null, whatsappUrl: null as string | null, sources: sources.slice(0, 20) };
 }
 export function latestFeedback(history: Feedback[]) {
   const seen = new Set<string>();
@@ -272,7 +312,7 @@ export function verifyDiscovery(candidate: DiscoveredBusiness, sources: string[]
   const retrieved = sources.map(publicUrl).filter((x): x is string => Boolean(x));
   const sourceUrl = retrieved.find((url) => citationKey(url) === citationKey(source));
   if (!sourceUrl) return null;
-  const website = publicUrl(candidate.websiteUrl);
+  const website = officialWebsite(candidate.websiteUrl);
   const websiteVerified = website && retrieved.some((url) =>
     new URL(url).hostname.replace(/^www\./, "") ===
     new URL(website).hostname.replace(/^www\./, ""),
@@ -284,6 +324,112 @@ export function verifyDiscovery(candidate: DiscoveredBusiness, sources: string[]
 
 export function discoveryContinues(requested: number, saved: number, rounds: number) {
   return saved < requested && rounds < Math.max(3, Math.ceil(requested / 5) + 2);
+}
+export type OpportunityEvidence = {
+  kind: "website_gap" | "manual_workflow" | "commerce_gap";
+  observation: string;
+  quote: string;
+  url: string;
+};
+export type WebsiteChecks = {
+  officialWebsite: boolean;
+  viewport: boolean;
+  fixedDesktopWidth: boolean;
+  placeholder: boolean;
+  textLength: number;
+  title: string;
+  checkedUrl: string;
+};
+export type Opportunity = {
+  version: number;
+  status: "qualified" | "review" | "not_fit";
+  websiteStatus: "not_found" | "weak" | "healthy" | "unknown";
+  service: "Launch" | "Sell" | "Scale" | "No clear fit";
+  reason: string;
+  evidence: OpportunityEvidence[];
+  checks: WebsiteChecks | null;
+  officialSearch: { checkedAt: string; sources: string[] } | null;
+  checkedAt: string;
+};
+export function websiteChecks(html: string, url: string, officialWebsite = true): WebsiteChecks {
+  const text = visibleText(html);
+  return {
+    officialWebsite,
+    viewport: /<meta\b[^>]*name\s*=\s*["']viewport["']/i.test(html),
+    fixedDesktopWidth: /(?:width\s*:\s*(?:9[6-9]\d|[1-9]\d{3,})px|<table\b[^>]*width\s*=\s*["']?(?:9[6-9]\d|[1-9]\d{3,}))/i.test(html),
+    placeholder: /\b(?:website|web site|site)\s+(?:is\s+|currently\s+)?(?:under construction|coming soon|being (?:updated|rebuilt))\b/i.test(text) || /\b(?:under construction|coming soon)\b/i.test(text) && text.length < 350,
+    textLength: text.length,
+    title: visibleText(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").slice(0, 200),
+    checkedUrl: url,
+  };
+}
+export function digitalServiceProvider(category: string | null | undefined) {
+  return /\b(?:web(?:site)? (?:design|development)|digital marketing|(?:web|marketing|seo) agency|ecommerce (?:development|solutions)|software development)\b/i.test(category ?? "");
+}
+export function qualifyOpportunity(input: {
+  websiteUrl: string | null;
+  category?: string | null;
+  focus?: CampaignConfig["focus"];
+  pages: Array<{ url: string; text: string }>;
+  checks: WebsiteChecks;
+  officialSearch: Opportunity["officialSearch"];
+  identityConfirmed: boolean;
+  assessment: {
+    serviceFit: string;
+    websiteStatus: string;
+    targetMatch: boolean;
+    competitor: boolean;
+    opportunityReason: string;
+    opportunityEvidence: OpportunityEvidence[];
+  };
+}): Opportunity {
+  const { assessment: a, checks, focus = "all_opportunities" } = input;
+  // Evidence must be copied from a page that was actually fetched. A model's
+  // plausible explanation or a guessed URL cannot qualify an opportunity.
+  const evidence = (Array.isArray(a.opportunityEvidence) ? a.opportunityEvidence : []).filter(e =>
+    e && typeof e.quote === "string" && e.quote.trim().length >= 12 &&
+    typeof e.observation === "string" && input.pages.some(p =>
+      publicUrl(p.url) === publicUrl(e.url) && p.text.includes(e.quote.trim())
+    ),
+  ).slice(0, 6).map(e => ({ ...e, quote: e.quote.trim().slice(0, 600), observation: e.observation.slice(0, 600) }));
+  let status: Opportunity["status"] = "review", service: Opportunity["service"] = "No clear fit";
+  let reason = "Public evidence does not establish a specific Toran opportunity yet.";
+  let websiteStatus: Opportunity["websiteStatus"] = input.websiteUrl ? "unknown" : "not_found";
+  const weak = !!input.websiteUrl && (checks.placeholder || !checks.viewport && checks.fixedDesktopWidth);
+  if (weak) websiteStatus = "weak";
+  else if (input.websiteUrl && a.websiteStatus === "healthy") websiteStatus = "healthy";
+  const manual = evidence.filter(e => e.kind === "manual_workflow" &&
+    /\b(?:order|orders|ordering|book|booking|bookings|reserve|reservation|reservations|appointment|appointments|quote|quotation)\b/i.test(e.quote) &&
+    /\b(?:call|phone|telephone|email|e-mail|whatsapp|send|message)\b/i.test(e.quote));
+  const commerce = evidence.filter(e => e.kind === "commerce_gap" &&
+    /\b(?:order|orders|ordering|payment|payments|checkout|purchase|buy)\b/i.test(e.quote) &&
+    /\b(?:call|phone|email|e-mail|whatsapp|send|message|cash|no online|not available online)\b/i.test(e.quote));
+  if (a.targetMatch !== true || a.competitor === true || digitalServiceProvider(input.category)) {
+    status = "not_fit";
+    reason = a.competitor === true || digitalServiceProvider(input.category)
+      ? "This business provides web, ecommerce or digital marketing services; excluded from Toran's customer prospect list."
+      : "This business does not match the requested business type and location.";
+  } else if (focus !== "automation" && (weak || !input.websiteUrl && input.identityConfirmed && (input.officialSearch?.sources.length ?? 0) > 0)) {
+    status = "qualified"; service = "Launch";
+    reason = weak
+      ? checks.placeholder ? "The fetched website is a placeholder or under construction." : "The fetched HTML has a fixed desktop width and no mobile viewport metadata; a mobile rebuild is worth reviewing."
+      : "No official website was found in a business-specific search. Offer a digital presence; confirm with the owner before claiming they have no site.";
+  } else if (focus !== "website_gaps" && a.serviceFit === "Sell" && commerce.length) {
+    status = "qualified"; service = "Sell";
+    reason = "A public ordering or payment instruction suggests an ecommerce opportunity; confirm the current process with the owner.";
+  } else if (focus !== "website_gaps" && a.serviceFit === "Scale" && manual.length) {
+    status = "qualified"; service = "Scale";
+    reason = "A public manual ordering, booking or quotation step suggests an automation opportunity; internal systems still need confirmation.";
+  } else if (input.websiteUrl && a.websiteStatus === "healthy" && !manual.length && !commerce.length) {
+    status = "not_fit";
+    reason = "The site appears established and no specific website, ecommerce or automation gap was supported by the checked pages.";
+  }
+  return { version: 2, status, service, websiteStatus, reason, evidence, checks,
+    officialSearch: input.officialSearch, checkedAt: new Date().toISOString() };
+}
+export function opportunityScore(score: number, opportunity: Opportunity, feedbackDelta = 0) {
+  const maximum = opportunity.status === "qualified" ? 90 : opportunity.status === "review" ? 39 : 15;
+  return Math.max(0, Math.min(maximum, Math.round(score) + (opportunity.status === "qualified" ? feedbackDelta : 0)));
 }
 export function csvCell(value: unknown) {
   let text = String(value ?? "");

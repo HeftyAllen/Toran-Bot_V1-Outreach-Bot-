@@ -11,8 +11,75 @@ import {
   publicUrl,
   searchSources,
   verifyDiscovery,
+  digitalServiceProvider, websiteChecks, qualifyOpportunity, opportunityScore,
+  officialWebsite, extractListingContacts,
 } from "../lib/bot-core.ts";
-import type { Feedback } from "../lib/bot-core.ts";
+import type { Feedback, OpportunityEvidence } from "../lib/bot-core.ts";
+
+const testUrl = "https://restaurant.example.com/";
+test("social profiles and directories are not treated as standalone business websites", () => {
+  assert.equal(officialWebsite("https://www.facebook.com/restaurant"),null);
+  assert.equal(officialWebsite("https://restaurantguru.com/restaurant"),null);
+  assert.equal(officialWebsite("https://restaurant.netlify.app/"),"https://restaurant.netlify.app/");
+});
+test("directory contacts must belong to the exact named business", () => {
+  const html='<footer>Call directory support: 011 999 9999</footer><script type="application/ld+json">'+JSON.stringify({'@graph':[
+    {'@type':'Restaurant',name:'Other restaurant',telephone:'011 222 2222',email:'other@example.com'},
+    {'@type':'Restaurant',name:'Wanted Restaurant',telephone:'011 333 3333',email:'bookings@example.com'},
+  ]})+'</script>';
+  const contacts=extractListingContacts(html,testUrl,'27','Wanted Restaurant');
+  assert.equal(contacts.phone,'+27113333333');assert.equal(contacts.email,'bookings@example.com');
+  assert.equal(contacts.sources.length,2);
+  assert.equal(extractListingContacts(html,testUrl,'27','Missing restaurant').phone,null);
+});
+function prospect(html: string, assessment: Record<string, unknown> = {}, options: Record<string, unknown> = {}) {
+  return qualifyOpportunity({ websiteUrl: testUrl, category: "Restaurant", focus: "all_opportunities",
+    pages: [{ url: testUrl, text: html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim() }],
+    checks: websiteChecks(html, testUrl), officialSearch: null, identityConfirmed: true,
+    assessment: { serviceFit: "Launch", websiteStatus: "healthy", targetMatch: true, competitor: false, opportunityReason: "Generic fit", opportunityEvidence: [], ...assessment }, ...options,
+  } as Parameters<typeof qualifyOpportunity>[0]);
+}
+test("good websites and generic service overlap cannot become high-scoring prospects", () => {
+  const o = prospect('<meta name="viewport" content="width=device-width"><h1>Restaurant</h1><p>Online ordering, menu and reservations.</p>');
+  assert.equal(o.status, "not_fit"); assert.equal(o.service, "No clear fit");
+  assert.equal(opportunityScore(95, o, 10), 15, "Feedback cannot override the opportunity gate");
+  assert.equal(digitalServiceProvider("Web Design & Digital Marketing"), true);
+  assert.equal(digitalServiceProvider("Ecommerce retail merchant"), false);
+  assert.equal(prospect('<p>Call to book a table</p>', { serviceFit: "Scale" }, { category: "Web design agency" }).status, "not_fit");
+});
+test("website gaps require observable signals instead of an AI opinion about design", () => {
+  assert.equal(prospect('<h1>Restaurant</h1><p>Our website is under construction.</p>').service, "Launch");
+  assert.equal(prospect('<div style="width:1100px"><h1>Restaurant</h1><p>Menu and bookings</p></div>').status, "qualified");
+  const merelyNoViewport = prospect('<h1>Restaurant</h1><p>Menu and bookings</p>', { websiteStatus: "weak" });
+  assert.equal(merelyNoViewport.status, "review"); assert.equal(merelyNoViewport.websiteStatus, "unknown");
+  assert.equal(opportunityScore(92, merelyNoViewport, 10), 39);
+});
+test("a missing URL needs a business-specific search and confirmed business identity", () => {
+  const html='<h1>Restaurant</h1><p>Sandton Restaurant listing</p>';
+  assert.equal(prospect(html, {}, { websiteUrl: null }).status, "review");
+  const officialSearch={checkedAt:new Date().toISOString(),sources:[testUrl]};
+  const qualified=prospect(html, {}, { websiteUrl: null, officialSearch });
+  assert.equal(qualified.status, "qualified");assert.equal(qualified.websiteStatus, "not_found");
+  assert.match(qualified.reason,/confirm with the owner/);
+  assert.equal(prospect(html, {}, { websiteUrl: null, officialSearch, identityConfirmed: false }).status,"review");
+});
+test("a decent site can qualify for automation only with an exact, relevant workflow quote", () => {
+  const quote="To reserve a table, call our bookings team.";
+  const html=`<meta name="viewport"><p>${quote}</p>`;
+  const evidence: OpportunityEvidence={kind:"manual_workflow",observation:"Phone-based reservations may benefit from a booking workflow.",quote,url:testUrl};
+  const assessment={serviceFit:"Scale",opportunityEvidence:[evidence]};
+  assert.equal(prospect(html,assessment).service,"Scale");
+  assert.equal(prospect(html,assessment,{focus:"website_gaps"}).status,"review");
+  assert.equal(prospect(html,{...assessment,opportunityEvidence:[{...evidence,quote:"Their CRM is broken and they lose customers."}]}).status,"not_fit");
+  assert.equal(prospect(html,{...assessment,opportunityEvidence:[{...evidence,url:"https://invented.example.com/"}]}).status,"not_fit");
+  const generic="Contact us by phone or email for more information.";
+  assert.equal(prospect(`<p>${generic}</p>`,{serviceFit:"Scale",opportunityEvidence:[{...evidence,quote:generic}]}).status,"not_fit");
+});
+test("manual product ordering can qualify for Sell without calling a good site bad", () => {
+  const quote="To order our products, send your order by WhatsApp.";
+  const o=prospect(`<meta name="viewport"><p>${quote}</p>`,{serviceFit:"Sell",opportunityEvidence:[{kind:"commerce_gap",quote,url:testUrl,observation:"Manual product orders could move to a checkout."}]});
+  assert.equal(o.status,"qualified");assert.equal(o.service,"Sell");assert.equal(o.websiteStatus,"healthy");
+});
 
 test("directory evidence keeps a business while an unsupported official website stays unconfirmed", () => {
   const candidate = {
