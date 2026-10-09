@@ -881,6 +881,13 @@ async function research(job: Job) {
       {
         contact_email: contacts.email ?? lead.contact_email ?? null,
         phone: contacts.phone ?? lead.phone ?? null,
+        ...(contacts.email &&
+        contacts.email.toLowerCase() !== lead.contact_email?.toLowerCase()
+          ? { email_consent_at: null, email_consent_note: null }
+          : {}),
+        ...(contacts.phone && contacts.phone !== lead.phone
+          ? { consent_at: null, consent_note: null }
+          : {}),
         whatsapp_url: contacts.whatsappUrl ?? lead.whatsapp_url ?? null,
         contact_sources: [...(lead.contact_sources ?? []), ...contacts.sources]
           .filter(

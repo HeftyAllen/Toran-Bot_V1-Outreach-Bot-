@@ -134,14 +134,16 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "Choose a business." }, { status: 400 });
   try {
     const db = getSupabaseDb();
-    const rows = await db.select<{ id: string; country_code?: string }>(
-      "leads",
-      {
-        select: "id,country_code",
-        id: `eq.${id}`,
-        limit: 1,
-      },
-    );
+    const rows = await db.select<{
+      id: string;
+      country_code?: string;
+      contact_email?: string;
+      phone?: string;
+    }>("leads", {
+      select: "id,country_code,contact_email,phone",
+      id: `eq.${id}`,
+      limit: 1,
+    });
     if (!rows[0])
       return Response.json({ error: "Business not found." }, { status: 404 });
     if (
@@ -194,6 +196,14 @@ export async function PATCH(request: Request) {
         },
       );
     } else if (input.recordEmailConsent === true) {
+      if (!rows[0].contact_email)
+        return Response.json(
+          {
+            error:
+              "Save this recipient's email address before recording their permission.",
+          },
+          { status: 400 },
+        );
       const note = typeof input.note === "string" ? input.note.trim() : "";
       if (note.length < 8 || note.length > 1200)
         return Response.json(
@@ -258,6 +268,10 @@ export async function PATCH(request: Request) {
             { status: 400 },
           );
         patch.phone = phone;
+        if (phone !== rows[0].phone) {
+          patch.consent_at = null;
+          patch.consent_note = null;
+        }
         sources.push({ field: "phone", value: phone, url: source });
       }
       if (typeof input.contactEmail === "string") {
@@ -268,6 +282,10 @@ export async function PATCH(request: Request) {
             { status: 400 },
           );
         patch.contact_email = email;
+        if (email !== rows[0].contact_email?.toLowerCase()) {
+          patch.email_consent_at = null;
+          patch.email_consent_note = null;
+        }
         sources.push({ field: "email", value: email, url: source });
       }
       const old = await db.select<{ contact_sources: unknown[] }>("leads", {

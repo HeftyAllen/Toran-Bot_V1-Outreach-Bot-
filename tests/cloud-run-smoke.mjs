@@ -1290,6 +1290,133 @@ try {
   );
   assert.equal((await call("/terms")).status, 200);
   assert.equal((await call("/privacy")).status, 200);
+  const changedContact = {
+    ...autoLead,
+    id: "synthetic-contact-change",
+    email_consent_at: new Date().toISOString(),
+    email_consent_note: "Permission for the original email.",
+    consent_at: new Date().toISOString(),
+    consent_note: "Permission for the original phone.",
+  };
+  tables.leads.push(changedContact);
+  assert.equal(
+    (
+      await call(
+        "/api/leads",
+        "PATCH",
+        {
+          id: changedContact.id,
+          contactEmail: "new@merchant.example.com",
+          sourceUrl: "https://merchant.example.com/contact",
+        },
+        "owner@example.test",
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    changedContact.email_consent_at,
+    null,
+    "A changed email must require fresh recipient permission",
+  );
+  assert.equal(changedContact.email_consent_note, null);
+  assert.equal(
+    (
+      await call(
+        "/api/leads",
+        "PATCH",
+        {
+          id: changedContact.id,
+          recordEmailConsent: true,
+          note: "The new recipient explicitly agreed to email outreach.",
+        },
+        "owner@example.test",
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await call(
+        "/api/leads",
+        "PATCH",
+        {
+          id: changedContact.id,
+          contactEmail: "new@merchant.example.com",
+          sourceUrl: "https://merchant.example.com/contact",
+        },
+        "owner@example.test",
+      )
+    ).status,
+    200,
+  );
+  assert.ok(
+    changedContact.email_consent_at,
+    "An unchanged address retains its recorded permission",
+  );
+  assert.equal(
+    (
+      await call(
+        "/api/leads",
+        "PATCH",
+        {
+          id: changedContact.id,
+          phone: "0712345679",
+          sourceUrl: "https://merchant.example.com/contact",
+        },
+        "owner@example.test",
+      )
+    ).status,
+    200,
+  );
+  assert.equal(changedContact.phone, "+254712345679");
+  assert.equal(changedContact.consent_at, null);
+  const updatedByResearch = {
+    ...changedContact,
+    id: "synthetic-research-contact-change",
+    status: "queued",
+    opportunity: null,
+    email_consent_at: new Date().toISOString(),
+    email_consent_note: "Permission for the old email.",
+    consent_at: new Date().toISOString(),
+    consent_note: "Permission for the old phone.",
+  };
+  tables.leads.push(updatedByResearch);
+  assert.equal(
+    (
+      await call(
+        "/api/run",
+        "POST",
+        {
+          planVersion: 3,
+          countryCode: "KE",
+          businessTypes: ["Salons"],
+          areas: ["Nairobi"],
+          mode: "queue",
+          count: 1,
+          scanLimit: 1,
+          websiteFilter: "weak",
+          auditWebsites: true,
+        },
+        "owner@example.test",
+      )
+    ).status,
+    202,
+  );
+  await tick();
+  await tick();
+  assert.equal(updatedByResearch.contact_email, "hello@salon.example.com");
+  assert.equal(updatedByResearch.phone, "+254712345678");
+  assert.equal(
+    updatedByResearch.email_consent_at,
+    null,
+    "Research cannot transfer permission to a newly extracted email",
+  );
+  assert.equal(
+    updatedByResearch.consent_at,
+    null,
+    "Research cannot transfer permission to a newly extracted phone",
+  );
   if (process.env.BOT1_UI_MANUAL === "1") {
     workerEnabled = false;
     settings.automation_enabled = true;
