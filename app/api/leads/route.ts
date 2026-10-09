@@ -1,6 +1,8 @@
-import { publicUrl, normalizePhone } from "../../../lib/bot-core";
+import { researchSourceUrl, normalizePhone } from "../../../lib/bot-core";
 import { SupabaseDbError, getSupabaseDb } from "../../../lib/supabase-db";
 import { requireApiUser } from "../../../lib/server-auth";
+import { countryInfo } from "../../../lib/search-config";
+import { settingsRow } from "../../../lib/campaigns";
 
 const allowedOutcomes = new Set([
   "good_fit",
@@ -14,7 +16,7 @@ const allowedOutcomes = new Set([
 
 function normalizeUrl(raw: unknown) {
   return typeof raw === "string"
-    ? publicUrl(
+    ? researchSourceUrl(
         raw.trim().startsWith("http") ? raw.trim() : `https://${raw.trim()}`,
       )
     : null;
@@ -71,17 +73,31 @@ export async function POST(request: Request) {
   const websiteUrl = normalizeUrl(input.websiteUrl);
   const region =
     typeof input.region === "string" ? input.region.trim().slice(0, 120) : "";
-  if (!companyName || !websiteUrl)
+  const discoverySourceUrl = normalizeUrl(input.discoverySourceUrl);
+  if (!companyName || (!websiteUrl && !discoverySourceUrl))
     return Response.json(
-      { error: "Enter a business name and a valid HTTPS website." },
+      {
+        error:
+          "Enter a business name and a public HTTPS website or individual business listing.",
+      },
       { status: 400 },
     );
   const now = new Date().toISOString();
   try {
+    const country = countryInfo(
+      input.countryCode ?? (await settingsRow()).search_country ?? "ZA",
+    );
+    if (!country)
+      return Response.json(
+        { error: "Choose a valid business country." },
+        { status: 400 },
+      );
     const rows = await getSupabaseDb().insert<{ id: string }>("leads", {
       id: crypto.randomUUID(),
       company_name: companyName,
       website_url: websiteUrl,
+      discovery_source_url: discoverySourceUrl,
+      country_code: country.code,
       region: region || null,
       status: "queued",
       created_at: now,
@@ -118,11 +134,14 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "Choose a business." }, { status: 400 });
   try {
     const db = getSupabaseDb();
-    const rows = await db.select<{ id: string }>("leads", {
-      select: "id",
-      id: `eq.${id}`,
-      limit: 1,
-    });
+    const rows = await db.select<{ id: string; country_code?: string }>(
+      "leads",
+      {
+        select: "id,country_code",
+        id: `eq.${id}`,
+        limit: 1,
+      },
+    );
     if (!rows[0])
       return Response.json({ error: "Business not found." }, { status: 404 });
     if (
@@ -150,7 +169,13 @@ export async function PATCH(request: Request) {
       await db.patch(
         "leads",
         { id: `eq.${id}` },
-        { status: "queued", research_error: null, opportunity: null, draft_subject: null, draft_body: null },
+        {
+          status: "queued",
+          research_error: null,
+          opportunity: null,
+          draft_subject: null,
+          draft_body: null,
+        },
       );
     } else if (typeof input.doNotContact === "boolean") {
       await db.patch(
@@ -159,8 +184,32 @@ export async function PATCH(request: Request) {
         {
           do_not_contact: input.doNotContact,
           ...(input.doNotContact
-            ? { consent_at: null, consent_note: null }
+            ? {
+                consent_at: null,
+                consent_note: null,
+                email_consent_at: null,
+                email_consent_note: null,
+              }
             : {}),
+        },
+      );
+    } else if (input.recordEmailConsent === true) {
+      const note = typeof input.note === "string" ? input.note.trim() : "";
+      if (note.length < 8 || note.length > 1200)
+        return Response.json(
+          {
+            error:
+              "Describe when and how the recipient agreed to email outreach.",
+          },
+          { status: 400 },
+        );
+      await db.patch(
+        "leads",
+        { id: `eq.${id}` },
+        {
+          email_consent_at: new Date().toISOString(),
+          email_consent_note: note,
+          do_not_contact: false,
         },
       );
     } else if (input.recordConsent === true) {
@@ -186,7 +235,7 @@ export async function PATCH(request: Request) {
       typeof input.phone === "string" ||
       typeof input.contactEmail === "string"
     ) {
-      const source = publicUrl(input.sourceUrl);
+      const source = researchSourceUrl(input.sourceUrl);
       if (!source)
         return Response.json(
           { error: "Provide the public source URL for this contact." },
@@ -199,7 +248,9 @@ export async function PATCH(request: Request) {
       if (typeof input.phone === "string") {
         const phone = normalizePhone(
           input.phone,
-          String(input.callingCode ?? "27"),
+          rows[0].country_code ??
+            (await settingsRow()).search_country ??
+            String(input.callingCode ?? "27"),
         );
         if (!phone)
           return Response.json(

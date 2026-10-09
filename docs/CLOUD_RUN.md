@@ -91,3 +91,65 @@ Official references:
 - [Supabase Cron](https://supabase.com/docs/guides/cron)
 - [Supabase Vault](https://supabase.com/docs/guides/database/vault)
 - [Meta WhatsApp policy](https://business.whatsapp.com/policy)
+
+## 7. Optional live Google lookup and automatic email
+
+After the v6 update, open **Settings → Discovery & email connections** from
+your phone. Provider keys are verified and encrypted using the existing
+`APP_ENCRYPTION_SECRET`; they are not public environment variables.
+
+For Google, enable **Places API (New)** and billing in your Google Cloud
+project and create a restricted server API key. Connect it in Settings. The
+live lookup on Overview accepts an industry, city and country, with an optional
+1–50 km radius around coordinates you provide. Each page requests at most
+20 listings and is a separate paid search. No-site-listed is a display filter,
+not proof that a business has no website. The default $0.04 request estimate
+covers the published $0.035 Text Search Enterprise base rate as reviewed on
+9 October 2026; free allowances and billing tiers may reduce actual charges.
+
+Google listing details remain temporary and attributed. They are not copied
+to Supabase leads, CSV exports or AI prompts. Use independent web research
+for the persistent prospect pipeline. Business Profile APIs manage authorized
+business profiles; they are not a replacement for broad lead discovery.
+The dashboard includes public `/terms` and `/privacy` information.
+
+For email, verify a domain in Resend, create an API key with domain-read and
+sending access, then enter the key, sender address, reply-to inbox, dashboard
+HTTPS URL, daily cap and conservative per-email cost in Settings. A blank
+webhook-secret field preserves an existing signing secret when reconnecting.
+Configure `https://YOUR-CLOUD-RUN-HOST/api/email/webhook` in Resend for
+`email.delivered`, `email.bounced`, `email.complained` and `email.failed`, and
+save its `whsec_…` signing secret in Settings. Replies go to your configured
+inbox; they are not imported automatically.
+
+Campaigns default to drafts. To automate delivery, choose **Send consented
+emails automatically**, set the run send cap, and confirm it in the campaign
+preview. Only current qualified leads with a draft, sourced email and recorded
+recipient permission can send. New discoveries without that permission remain
+drafts. Manual sends require confirmation in the lead's details. Pause/cancel,
+monthly/run budget, daily cap, suppression and duplicate checks happen on the
+server. Unknown responses are blocked from retries until reviewed. Delivery
+webhooks track outcomes; bounce/complaint and signed unsubscribe links suppress
+further outreach. Opening an unsubscribe link does not change consent until
+its confirmation form is submitted (one-click email POSTs also work).
+
+WhatsApp retains its existing Meta-approved template, opt-in, suppression and
+24-hour reply controls. This update does not automatically send WhatsApp
+messages as part of a campaign.
+
+References:
+- [Google Places Text Search](https://developers.google.com/maps/documentation/places/web-service/text-search)
+- [Google Places policies and attribution](https://developers.google.com/maps/documentation/places/web-service/policies)
+- [Google Maps Platform service-specific terms](https://cloud.google.com/maps-platform/terms/maps-service-terms)
+- [Google Maps pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
+- [PageSpeed Insights API](https://developers.google.com/speed/docs/insights/v5/get-started)
+- [Resend sending API](https://resend.com/docs/api-reference/emails/send-email)
+- [Resend webhooks](https://resend.com/docs/dashboard/webhooks/introduction)
+
+Isolated development verification: `npm run test:bot`, `npm run test:auth`,
+`npm run build:cloud-run`, then `npm run test:cloud-run`. For browser inspection,
+run the smoke script with `BOT1_UI_MANUAL=1`; its test-only proxy at
+`http://127.0.0.1:4268` uses a synthetic owner session and provider responses.
+`/__mobile` renders the same app in a 390 px frame. Stop the process with
+SIGTERM when finished. These fixtures must never be used with production
+credentials.

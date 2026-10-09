@@ -20,7 +20,8 @@ export async function PATCH(request: Request) {
     )
       return Response.json(
         {
-          error: "Choose the confirmed result and provide evidence from Meta.",
+          error:
+            "Choose the confirmed result and provide evidence from the sending provider.",
         },
         { status: 400 },
       );

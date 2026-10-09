@@ -2,6 +2,7 @@ import { env } from "@bot1/runtime";
 import { campaignConfig, settingsRow } from "../../../lib/campaigns";
 import { requireApiUser } from "../../../lib/server-auth";
 import { getSupabaseDb, SupabaseDbError } from "../../../lib/supabase-db";
+import { providerRow } from "../../../lib/providers";
 export async function POST(request: Request) {
   const { user, member, response } = await requireApiUser();
   if (!user || !member) return response;
@@ -36,6 +37,14 @@ export async function POST(request: Request) {
       );
     }
     const db = getSupabaseDb();
+    if (config.outreachMode === "email" && !(await providerRow("resend")))
+      return Response.json(
+        {
+          error:
+            "Connect email delivery in Settings before selecting automatic email.",
+        },
+        { status: 409 },
+      );
     const queued =
       config.mode === "queue"
         ? await db.select<{ id: string }>("leads", {

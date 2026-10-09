@@ -1,5 +1,6 @@
 import { getSupabaseDb } from "../../../lib/supabase-db";
 import { requireApiUser } from "../../../lib/server-auth";
+import { countryInfo } from "../../../lib/search-config";
 const textFields: Record<string, string> = {
   brandName: "brand_name",
   brandDomain: "brand_domain",
@@ -65,7 +66,10 @@ export async function PATCH(request: Request) {
         /^\d{1,3}$/.test(value)
       )
         patch.calling_code = value;
-      else
+      else if (key === "searchCountry" && countryInfo(value)) {
+        patch.search_country = countryInfo(value)!.code;
+        patch.calling_code = countryInfo(value)!.callingCode;
+      } else
         return Response.json(
           { error: "Unknown or invalid setting." },
           { status: 400 },

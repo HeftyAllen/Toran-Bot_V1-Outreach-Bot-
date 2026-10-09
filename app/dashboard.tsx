@@ -1,4 +1,8 @@
 "use client";
+import CampaignBuilder from "../components/campaign-builder";
+import { ProviderSettings, GoogleLookup } from "../components/provider-panels";
+import type { ProviderStatus } from "../components/provider-panels";
+import { countries } from "../lib/search-config";
 import {
   Activity,
   ArrowUpRight,
@@ -65,6 +69,8 @@ type Lead = {
   address: string | null;
   contactSources: ContactSource[];
   contactsVerifiedAt: string | null;
+  emailConsentAt?: string | null;
+  emailConsentNote?: string | null;
   consentAt: string | null;
   consentNote: string | null;
   doNotContact: boolean;
@@ -86,9 +92,21 @@ type Run = {
   stage: string;
   leadIds: string[];
   createdAt: string;
-  config: { locations?: string; market?: string; budgetUsd?: number; qualificationVersion?: number };
+  candidatesSeen?: number;
+  excluded?: number;
+  duplicates?: number;
+  sentCount?: number;
+  config: {
+    locations?: string;
+    market?: string;
+    budgetUsd?: number;
+    qualificationVersion?: number;
+    targetMode?: string;
+    planVersion?: number;
+  };
 };
 type Settings = {
+  searchCountry?: string;
   brandName: string;
   brandDomain: string;
   targetMarket: string;
@@ -115,6 +133,13 @@ type Usage = {
   searchCalls: number;
   trackingSince: string | null;
 };
+type RunSpend = {
+  runId: string;
+  spentUsd: number;
+  reservedUsd: number;
+  emailUsd: number;
+  unconfirmedCount: number;
+};
 type UsageEvent = {
   id: string;
   run_id: string | null;
@@ -127,6 +152,7 @@ type UsageEvent = {
   created_at: string;
 };
 type Message = {
+  channel?: string;
   id: string;
   lead_id: string | null;
   kind: string;
@@ -143,6 +169,8 @@ type Inbound = {
   received_at: string;
 };
 type Overview = {
+  runSpending?: RunSpend[];
+  providers?: ProviderStatus[];
   settings: Settings;
   leads: Lead[];
   runs: Run[];
@@ -312,8 +340,10 @@ export default function Dashboard({
     }
   }
   useEffect(() => {
-    void refresh();
-    void refreshMembers();
+    const initial = window.setTimeout(() => {
+      void refresh();
+      void refreshMembers();
+    }, 0);
     const timer = window.setInterval(
       () => {
         void refresh();
@@ -322,7 +352,10 @@ export default function Dashboard({
       },
       active ? 8000 : 30000,
     );
-    return () => clearInterval(timer); // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      clearTimeout(initial);
+      clearInterval(timer);
+    }; // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!active, canManage]);
   async function act(path: string, method: string, body?: unknown) {
     setBusy(true);
@@ -397,8 +430,10 @@ export default function Dashboard({
             .toLowerCase()
             .includes(query.toLowerCase()) &&
           (filter === "all" ||
+            (filter === "latest" && runs[0]?.leadIds.includes(l.id)) ||
             (filter === "qualified" && l.opportunity?.status === "qualified") ||
-            (filter === "review" && (!l.opportunity || l.opportunity.status === "review")) ||
+            (filter === "review" &&
+              (!l.opportunity || l.opportunity.status === "review")) ||
             (filter === "not_fit" && l.opportunity?.status === "not_fit") ||
             (filter === "contacts"
               ? !!(l.phone || l.contactEmail)
@@ -408,13 +443,17 @@ export default function Dashboard({
                   ? l.status === "drafted"
                   : l.status === filter)),
       ),
-    [leads, query, filter],
+    [leads, query, filter, runs],
   );
   const positives = leads.filter((l) =>
     ["replied", "booked", "won"].includes(l.outcome ?? ""),
   ).length;
   const researched = leads.filter((l) => l.fitScore !== null).length;
   const prospects = leads.filter((l) => l.opportunity?.status === "qualified");
+  const latestRun = runs[0];
+  const latestResults = latestRun
+    ? leads.filter((l) => latestRun.leadIds.includes(l.id))
+    : prospects;
   function navigate(next: Section) {
     setSection(next);
     setMobileMenu(false);
@@ -639,7 +678,8 @@ export default function Dashboard({
                     <h2>Find businesses Toran can help</h2>
                     <p>
                       Prioritizes weak or missing websites, then checks for
-                      ecommerce and automation opportunities with public evidence.
+                      ecommerce and automation opportunities with public
+                      evidence.
                     </p>
                   </div>
                 </div>
@@ -662,10 +702,13 @@ export default function Dashboard({
                   </button>
                 )}
               </div>
-              <CampaignForm
-                key={`${settings.targetLocations}|${settings.targetMarket}|${settings.researchLimit}|${settings.runBudgetUsd}`}
+              <CampaignBuilder
+                key={`${settings.targetLocations}|${settings.targetMarket}|${settings.researchLimit}|${settings.runBudgetUsd}|${settings.searchCountry}`}
                 settings={settings}
                 onStart={start}
+                emailConnected={
+                  !!data.providers?.some((p) => p.id === "resend")
+                }
                 disabled={
                   !canManage ||
                   busy ||
@@ -673,6 +716,14 @@ export default function Dashboard({
                   !!active ||
                   !settings.automationEnabled
                 }
+              />
+              <GoogleLookup
+                connected={
+                  !!data.providers?.some((p) => p.id === "google_places")
+                }
+                canManage={canManage}
+                countryCode={settings.searchCountry ?? "ZA"}
+                onUsageChanged={refresh}
               />
               {active && (
                 <RunProgress
@@ -722,22 +773,37 @@ export default function Dashboard({
                 <div className="panel">
                   <div className="panel-heading">
                     <div>
-                      <h2>Fresh prospects</h2>
+                      <h2>
+                        {latestRun
+                          ? "Latest campaign results"
+                          : "Fresh prospects"}
+                      </h2>
                       <p>
-                        Qualified opportunities with contacts, evidence, and a draft.
+                        {latestRun
+                          ? `${latestRun.discovered} collected · ${latestRun.qualified ?? 0} qualified. Open a business to see its screening result and contacts.`
+                          : "Qualified opportunities with contacts, evidence, and a draft."}
                       </p>
                     </div>
                     <button
                       className="text-button"
-                      onClick={() => navigate("Leads")}
+                      onClick={() => {
+                        setFilter(latestRun ? "latest" : "qualified");
+                        navigate("Leads");
+                      }}
                     >
                       View all <ArrowUpRight size={14} />
                     </button>
                   </div>
                   <LeadList
-                    leads={prospects.slice(0, 5)}
+                    leads={latestResults.slice(0, 5)}
                     onSelect={setSelectedId}
                   />
+                  {latestRun && !latestResults.length && (
+                    <p className="panel-empty-note">
+                      This campaign has no saved businesses yet. Check Campaign
+                      activity for its status.
+                    </p>
+                  )}
                 </div>
                 <div className="panel">
                   <div className="panel-heading">
@@ -769,6 +835,7 @@ export default function Dashboard({
                   onChange={(e) => setFilter(e.target.value)}
                 >
                   <option value="qualified">Qualified prospects</option>
+                  <option value="latest">Latest campaign results</option>
                   <option value="review">Needs opportunity review</option>
                   <option value="not_fit">Ruled out</option>
                   <option value="all">All businesses</option>
@@ -810,7 +877,9 @@ export default function Dashboard({
               </div>
               <div className="outreach-grid">
                 {leads
-                  .filter((l) => l.draftBody && l.opportunity?.status === "qualified")
+                  .filter(
+                    (l) => l.draftBody && l.opportunity?.status === "qualified",
+                  )
                   .slice(0, 60)
                   .map((l) => (
                     <article className="panel draft-card" key={l.id}>
@@ -844,7 +913,9 @@ export default function Dashboard({
                     </article>
                   ))}
               </div>
-              {!leads.some((l) => l.draftBody && l.opportunity?.status === "qualified") && (
+              {!leads.some(
+                (l) => l.draftBody && l.opportunity?.status === "qualified",
+              ) && (
                 <Empty>
                   Start a campaign to prepare tailored outreach drafts.
                 </Empty>
@@ -860,8 +931,10 @@ export default function Dashboard({
                             "Saved contact"}
                         </strong>
                         <span>
-                          {m.template_name ?? "Text reply"} ·{" "}
-                          {date(m.created_at)}
+                          {m.channel === "email"
+                            ? "Email"
+                            : (m.template_name ?? "WhatsApp reply")}{" "}
+                          · {date(m.created_at)}
                         </span>
                         {m.error && <span>{m.error}</span>}
                       </div>
@@ -875,12 +948,12 @@ export default function Dashboard({
                               className="text-button"
                               onClick={() => {
                                 const result = window.prompt(
-                                  "After checking Meta: type sent or failed.",
+                                  "After checking the sending provider: type sent or failed.",
                                 );
                                 if (!["sent", "failed"].includes(result ?? ""))
                                   return;
                                 const note = window.prompt(
-                                  "Meta evidence for this result:",
+                                  "Provider evidence for this result:",
                                 );
                                 if (!note || note.length < 8) return;
                                 void act("/api/outreach", "PATCH", {
@@ -924,7 +997,8 @@ export default function Dashboard({
               settings={settings}
               usage={usage}
               events={usageEvents}
-              leads={leads}
+              runs={runs}
+              runSpending={data.runSpending ?? []}
               canManage={canManage}
               onSave={saveSettings}
               onReconcile={async (id, cost, note) => {
@@ -946,6 +1020,11 @@ export default function Dashboard({
                 <WhatsAppSetup
                   canManage={canManage}
                   whatsapp={whatsapp}
+                  onSaved={refresh}
+                />
+                <ProviderSettings
+                  canManage={canManage}
+                  providers={data.providers ?? []}
                   onSaved={refresh}
                 />
                 <BrowserAccessPanel email={email} />
@@ -993,12 +1072,19 @@ export default function Dashboard({
             lead={selected}
             canManage={canManage}
             connectedWhatsApp={!!whatsapp}
+            connectedEmail={!!data.providers?.some((p) => p.id === "resend")}
             busy={busy}
             onChange={(patch) => changeLead(selected.id, patch)}
             onSend={async (payload) => {
               await act("/api/whatsapp/send", "POST", {
                 leadId: selected.id,
                 ...payload,
+              });
+            }}
+            onEmail={async () => {
+              await act("/api/email/send", "POST", {
+                leadId: selected.id,
+                confirm: true,
               });
             }}
             onDelete={async () => {
@@ -1022,6 +1108,8 @@ export default function Dashboard({
                 await act("/api/leads", "POST", {
                   companyName: form.get("company"),
                   websiteUrl: form.get("website"),
+                  discoverySourceUrl: form.get("source"),
+                  countryCode: form.get("country"),
                   region: form.get("region"),
                 });
                 setShowAdd(false);
@@ -1039,9 +1127,20 @@ export default function Dashboard({
               <input
                 name="website"
                 type="url"
-                required
                 placeholder="https://example.com"
               />
+            </label>
+            <label>
+              Individual business listing (if no website is known)
+              <input
+                name="source"
+                type="url"
+                placeholder="https://directory.example/business-profile"
+              />
+              <small>
+                Provide a website or an individual listing. A broad category
+                page cannot confirm a business.
+              </small>
             </label>
             <label>
               Location
@@ -1050,6 +1149,19 @@ export default function Dashboard({
                 maxLength={120}
                 placeholder="City, country"
               />
+            </label>
+            <label>
+              Business country
+              <select
+                name="country"
+                defaultValue={settings.searchCountry ?? "ZA"}
+              >
+                {countries.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <button className="button button-primary" disabled={busy}>
               Save to research queue
@@ -1128,8 +1240,18 @@ function LeadList({
               {l.category ?? l.serviceFit ?? "Research pending"}
             </span>
             <span>
-              {l.opportunity?.status === "qualified" ? `${l.opportunity.service} opportunity · ` : l.opportunity?.status === "not_fit" ? "Ruled out · " : "Needs review · "}
-              {l.opportunity?.websiteStatus === "not_found" ? "Official site not found" : l.opportunity?.websiteStatus === "weak" ? "Website improvement signals" : l.opportunity?.websiteStatus === "healthy" ? "Established website" : "Website not assessed"}
+              {l.opportunity?.status === "qualified"
+                ? `${l.opportunity.service} opportunity · `
+                : l.opportunity?.status === "not_fit"
+                  ? "Ruled out · "
+                  : "Needs review · "}
+              {l.opportunity?.websiteStatus === "not_found"
+                ? "Official site not found"
+                : l.opportunity?.websiteStatus === "weak"
+                  ? "Website improvement signals"
+                  : l.opportunity?.websiteStatus === "healthy"
+                    ? "Established website"
+                    : "Website not assessed"}
             </span>
             <span>
               {l.phone ?? ""}
@@ -1153,7 +1275,10 @@ function LeadList({
       ))}
     </div>
   ) : (
-    <Empty>No prospects in this view yet. Start a campaign, or switch the filter to review screened candidates.</Empty>
+    <Empty>
+      No prospects in this view yet. Start a campaign, or switch the filter to
+      review screened candidates.
+    </Empty>
   );
 }
 function Runs({ runs }: { runs: Run[] }) {
@@ -1170,7 +1295,12 @@ function Runs({ runs }: { runs: Run[] }) {
               {r.config.locations ?? ""} · {date(r.createdAt)} · {r.status}
             </span>
             {r.requested > 0 && (
-              <span>{r.config.qualificationVersion === 2 ? `${r.qualified ?? 0}/${r.requested} qualified prospects · ${r.discovered} candidates found · ${r.processed} screened` : `${r.discovered}/${r.requested} businesses saved · ${r.processed} researched`} · {r.failed} failed</span>
+              <span>
+                {r.config.qualificationVersion === 2
+                  ? `${r.config.targetMode === "candidates" ? `${r.discovered}/${r.requested} candidates found` : `${r.qualified ?? 0}/${r.requested} qualified prospects`} · ${r.qualified ?? 0} qualified · ${r.processed} screened · ${r.excluded ?? 0} excluded · ${r.duplicates ?? 0} duplicates`
+                  : `${r.discovered}/${r.requested} businesses saved · ${r.processed} researched`}{" "}
+                · {r.failed} failed
+              </span>
             )}
           </div>
         </div>
@@ -1191,7 +1321,12 @@ function RunProgress({
   canManage: boolean;
   onCancel: () => void;
 }) {
-  const done = run.config.qualificationVersion === 2 ? run.qualified ?? 0 : run.processed + run.failed;
+  const done =
+    run.config.targetMode === "candidates"
+      ? run.processed + run.failed
+      : run.config.qualificationVersion === 2
+        ? (run.qualified ?? 0)
+        : run.processed + run.failed;
   return (
     <div className="panel campaign-progress" role="status">
       <div>
@@ -1200,7 +1335,14 @@ function RunProgress({
         </span>
         <h3>{run.message}</h3>
         <p>
-          {run.qualified ?? 0}/{run.requested} qualified · {run.discovered} candidates · {run.processed} screened · {run.failed} failed
+          {run.config.targetMode === "candidates"
+            ? `${run.discovered}/${run.requested} candidates collected`
+            : `${run.qualified ?? 0}/${run.requested} qualified prospects`}{" "}
+          · {run.processed} screened · {run.failed} failed
+          <br />
+          {run.candidatesSeen ?? run.discovered} search candidates ·{" "}
+          {run.excluded ?? 0} excluded · {run.duplicates ?? 0} duplicates ·{" "}
+          {run.sentCount ?? 0} emails accepted
         </p>
         <progress
           aria-label="Research progress"
@@ -1219,129 +1361,6 @@ function RunProgress({
         </button>
       )}
     </div>
-  );
-}
-function CampaignForm({
-  settings,
-  onStart,
-  disabled,
-}: {
-  settings: Settings;
-  onStart: (config: Record<string, unknown>) => Promise<void>;
-  disabled: boolean;
-}) {
-  const [mode, setMode] = useState("discover");
-  return (
-    <form
-      className="panel campaign-form bot-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        const f = new FormData(e.currentTarget);
-        void onStart({
-          market: f.get("market"),
-          locations: f.get("locations"),
-          count: Number(f.get("count")),
-          budgetUsd: Number(f.get("budget")),
-          callingCode: f.get("code"),
-          focus: f.get("focus"),
-          mode,
-        });
-      }}
-    >
-      <div className="panel-heading">
-        <div>
-          <h2>Build your next lead list</h2>
-          <p>Find customers for Toran’s Launch, Sell, and Scale services.</p>
-        </div>
-        <span className="soft-count">1–100 businesses</span>
-      </div>
-      <div className="campaign-fields">
-        <label>
-          Business type
-          <input
-            name="market"
-            defaultValue={settings.targetMarket}
-            placeholder="e.g. dentists, restaurants, plumbers"
-            required
-            maxLength={500}
-          />
-        </label>
-        <label>
-          Locations
-          <input
-            name="locations"
-            defaultValue={settings.targetLocations}
-            placeholder="e.g. Sandton, Johannesburg, South Africa"
-            required
-            maxLength={500}
-          />
-        </label>
-        <label>
-          Qualified prospect target
-          <input
-            name="count"
-            type="number"
-            min={1}
-            max={100}
-            step={1}
-            defaultValue={settings.researchLimit}
-            required
-          />
-        </label>
-        <label>
-          Run spending limit (USD)
-          <input
-            name="budget"
-            type="number"
-            min={0.05}
-            max={100}
-            step={0.05}
-            defaultValue={settings.runBudgetUsd}
-            required
-          />
-        </label>
-        <label>
-          Phone country code
-          <input
-            name="code"
-            pattern="[0-9]{1,3}"
-            defaultValue={settings.callingCode}
-            placeholder="27"
-            required
-          />
-          <small>For local numbers: 27 = South Africa.</small>
-        </label>
-        <label>
-          Opportunity focus
-          <select name="focus" defaultValue="all_opportunities">
-            <option value="all_opportunities">Weak/missing sites + Sell/Scale opportunities</option>
-            <option value="website_gaps">Weak or missing websites only</option>
-            <option value="automation">Automation opportunities only</option>
-          </select>
-        </label>
-        <label>
-          Work to do
-          <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option value="discover">Discover new businesses</option>
-            <option value="queue">Research saved queue</option>
-          </select>
-        </label>
-      </div>
-      <div className="campaign-start">
-        <p>
-          Agencies excluded · specific opportunity required · budget checked
-          before every paid call. Screening may return fewer qualified prospects.
-        </p>
-        <button
-          className="button button-primary"
-          disabled={
-            disabled || !settings.apiConfigured || !settings.workerConfigured
-          }
-        >
-          <Sparkles size={16} /> Start Bot 1
-        </button>
-      </div>
-    </form>
   );
 }
 function Modal({
@@ -1393,24 +1412,32 @@ function BusinessDetail({
   lead: l,
   canManage,
   connectedWhatsApp,
+  connectedEmail,
   busy,
   onChange,
   onSend,
+  onEmail,
   onDelete,
 }: {
   lead: Lead;
   canManage: boolean;
   connectedWhatsApp: boolean;
+  connectedEmail: boolean;
   busy: boolean;
   onChange: (patch: Record<string, unknown>) => Promise<void>;
   onSend: (payload: Record<string, unknown>) => Promise<void>;
+  onEmail: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
   const [notice, setNotice] = useState(""),
     [kind, setKind] = useState("template");
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
   const recent =
-    l.lastInboundAt &&
-    Date.now() - new Date(l.lastInboundAt).getTime() < 86400000;
+    l.lastInboundAt && now - new Date(l.lastInboundAt).getTime() < 86400000;
   const eligible = canManage && !l.doNotContact && !!l.consentAt && !!l.phone;
   async function perform(action: () => Promise<void>) {
     setNotice("");
@@ -1433,21 +1460,102 @@ function BusinessDetail({
         <Score lead={l} />
       </div>
       <div className="detail-block">
-        <h3>{l.opportunity?.status === "qualified" ? `${l.opportunity.service} opportunity` : l.opportunity?.status === "not_fit" ? "Ruled out" : "Opportunity needs review"}</h3>
-        <p>{l.opportunity?.reason ?? "This business has not been assessed under Toran’s opportunity rules."}</p>
+        <h3>
+          {l.opportunity?.status === "qualified"
+            ? `${l.opportunity.service} opportunity`
+            : l.opportunity?.status === "not_fit"
+              ? "Ruled out"
+              : "Opportunity needs review"}
+        </h3>
+        <p>
+          {l.opportunity?.reason ??
+            "This business has not been assessed under Toran’s opportunity rules."}
+        </p>
         {l.opportunity?.evidence.map((e, i) => (
           <div key={`${e.url}-${i}`}>
             <p>{e.observation}</p>
             <blockquote>{e.quote}</blockquote>
-            <a href={e.url} target="_blank" rel="noreferrer">Checked source <ArrowUpRight size={12} /></a>
+            <a href={e.url} target="_blank" rel="noreferrer">
+              Checked source <ArrowUpRight size={12} />
+            </a>
           </div>
         ))}
-        {l.opportunity?.officialSearch && <p>Official website search checked {date(l.opportunity.officialSearch.checkedAt)}. A missing result is an opportunity to verify with the owner.</p>}
-        <p>Website screening uses fetched HTML and public instructions. Visual quality, speed, hidden systems, and buying intent need further confirmation.</p>
-        {canManage && l.opportunity?.status !== "qualified" && l.status !== "queued" && l.status !== "researching" && (
-          <button className="button button-outline" disabled={busy} onClick={() => void perform(() => onChange({ retry: true }))}>Queue fresh opportunity assessment</button>
+        {l.opportunity?.officialSearch && (
+          <p>
+            Official website search checked{" "}
+            {date(l.opportunity.officialSearch.checkedAt)}. A missing result is
+            an opportunity to verify with the owner.
+          </p>
         )}
+        <p>
+          Website screening uses public pages and optional mobile lab tests. Lab
+          results are a snapshot; hidden systems and buying intent still need
+          confirmation.
+        </p>
+        {canManage &&
+          l.opportunity?.status !== "qualified" &&
+          l.status !== "queued" &&
+          l.status !== "researching" && (
+            <button
+              className="button button-outline"
+              disabled={busy}
+              onClick={() => void perform(() => onChange({ retry: true }))}
+            >
+              Queue fresh opportunity assessment
+            </button>
+          )}
       </div>
+      {l.opportunity?.mobileAudit && (
+        <div className="detail-block mobile-audit">
+          <h3>Mobile website lab test</h3>
+          <p>
+            Checked {date(l.opportunity.mobileAudit.checkedAt)} ·{" "}
+            {l.opportunity.mobileAudit.status}
+          </p>
+          {l.opportunity.mobileAudit.status === "complete" ? (
+            <>
+              <div className="audit-scores">
+                <span>
+                  Performance{" "}
+                  <strong>
+                    {l.opportunity.mobileAudit.performance ?? "—"}/100
+                  </strong>
+                </span>
+                <span>
+                  Accessibility{" "}
+                  <strong>
+                    {l.opportunity.mobileAudit.accessibility ?? "—"}/100
+                  </strong>
+                </span>
+                <span>
+                  Largest contentful paint{" "}
+                  <strong>
+                    {l.opportunity.mobileAudit.lcpMs === null
+                      ? "—"
+                      : `${(l.opportunity.mobileAudit.lcpMs / 1000).toFixed(1)}s`}
+                  </strong>
+                </span>
+              </div>
+              {l.opportunity.mobileAudit.screenshot && (
+                <img
+                  src={l.opportunity.mobileAudit.screenshot}
+                  alt="Mobile screenshot captured by the website lab test"
+                />
+              )}
+              {l.opportunity.mobileAudit.issues.map((issue, i) => (
+                <p key={i}>{issue}</p>
+              ))}
+              <p>
+                One simulated mobile lab test. Scores do not establish
+                subjective design quality or how every visitor experiences the
+                site.
+              </p>
+            </>
+          ) : (
+            <p>{l.opportunity.mobileAudit.error}</p>
+          )}
+        </div>
+      )}
       {notice && (
         <p role="status" className="auth-message">
           {notice}
@@ -1579,7 +1687,7 @@ function BusinessDetail({
         </form>
       )}
       <div className="detail-block">
-        <h3>Outreach consent</h3>
+        <h3>WhatsApp consent</h3>
         <p>
           {l.doNotContact
             ? "This contact is suppressed."
@@ -1625,6 +1733,69 @@ function BusinessDetail({
                 : "Mark do not contact"}
             </button>
           </>
+        )}
+      </div>
+      <div className="detail-block bot-form">
+        <h3>Email outreach</h3>
+        <p>
+          {connectedEmail
+            ? "Email delivery is connected. Accepted messages are tracked in Outreach; replies go to your reply-to inbox."
+            : "Connect a verified sender in Settings to enable email delivery."}
+        </p>
+        <p>
+          {l.emailConsentAt
+            ? `Email consent recorded ${date(l.emailConsentAt)}: ${l.emailConsentNote}`
+            : "Record the recipient's agreement to email outreach before sending."}
+        </p>
+        {canManage && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const f = new FormData(e.currentTarget);
+              void perform(() =>
+                onChange({
+                  recordEmailConsent: true,
+                  note: f.get("emailConsent"),
+                }),
+              );
+            }}
+          >
+            <label>
+              Email consent evidence
+              <input
+                name="emailConsent"
+                minLength={8}
+                maxLength={1200}
+                required
+                placeholder="When and how this contact agreed to email outreach"
+              />
+            </label>
+            <button className="button button-outline" disabled={busy}>
+              Record email consent
+            </button>
+          </form>
+        )}
+        {canManage && l.opportunity?.status === "qualified" && l.draftBody && (
+          <button
+            className="button button-primary"
+            disabled={
+              busy ||
+              !connectedEmail ||
+              !l.emailConsentAt ||
+              !l.contactEmail ||
+              l.doNotContact
+            }
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Send the displayed outreach draft to ${l.contactEmail}?`,
+                )
+              )
+                void perform(onEmail);
+            }}
+          >
+            Send email draft
+          </button>
         )}
       </div>
       {l.draftBody && l.opportunity?.status === "qualified" && (
@@ -1728,7 +1899,11 @@ function BusinessDetail({
               Reply text
               <textarea
                 name="body"
-                defaultValue={l.opportunity?.status === "qualified" ? l.draftBody ?? "" : ""}
+                defaultValue={
+                  l.opportunity?.status === "qualified"
+                    ? (l.draftBody ?? "")
+                    : ""
+                }
                 maxLength={3000}
                 required
                 rows={4}
@@ -1769,7 +1944,7 @@ function BusinessDetail({
           >
             <label>
               International phone
-              <input name="phone" placeholder="+27…" />
+              <input name="phone" placeholder="Country code and phone number" />
             </label>
             <label>
               Business email
@@ -1812,7 +1987,8 @@ function Spending({
   settings,
   usage,
   events,
-  leads,
+  runs,
+  runSpending,
   canManage,
   onSave,
   onReconcile,
@@ -1820,7 +1996,8 @@ function Spending({
   settings: Settings;
   usage: Usage;
   events: UsageEvent[];
-  leads: Lead[];
+  runs: Run[];
+  runSpending: RunSpend[];
   canManage: boolean;
   onSave: (patch: Partial<Settings>) => Promise<void>;
   onReconcile: (id: string, cost: number, note: string) => Promise<void>;
@@ -1828,7 +2005,11 @@ function Spending({
   const [notice, setNotice] = useState("");
   const month = Number(usage.monthEstimatedUsd) + Number(usage.monthActualUsd);
   const allocated = month + Number(usage.monthReservedUsd);
-  const researched = leads.filter((l) => l.fitScore !== null).length;
+  const qualified = runs.reduce(
+    (total, r) => total + Number(r.qualified ?? 0),
+    0,
+  );
+  const spent = runSpending.reduce((total, r) => total + Number(r.spentUsd), 0);
   return (
     <>
       <div className="metrics-grid">
@@ -1836,7 +2017,7 @@ function Spending({
           icon={Wallet}
           label="Estimated this month"
           value={money(usage.monthEstimatedUsd)}
-          detail="AI pricing + configured WhatsApp estimate"
+          detail="AI, discovery and configured message estimates"
         />
         <Stat
           icon={Check}
@@ -1852,17 +2033,9 @@ function Spending({
         />
         <Stat
           icon={Globe2}
-          label="Tracked cost per saved lead"
-          value={
-            researched
-              ? money(
-                  (Number(usage.allTimeEstimatedUsd) +
-                    Number(usage.allTimeActualUsd)) /
-                    researched,
-                )
-              : "—"
-          }
-          detail="Based on the latest 1,000 lead records"
+          label="Cost per qualified prospect"
+          value={qualified ? money(spent / qualified) : "—"}
+          detail="Tracked spend across the latest 20 campaigns"
         />
       </div>
       <div className="panel budget-panel">
@@ -1959,6 +2132,47 @@ function Spending({
           </button>
         </form>
       )}
+      <div className="panel ledger-panel">
+        <h2>Campaign costs & results</h2>
+        <p>
+          A business collected is a candidate. Qualification happens after
+          screening. Each row includes its full tracked ledger.
+        </p>
+        {runs.length ? (
+          runs.map((run) => {
+            const cost = runSpending.find((c) => c.runId === run.id);
+            return (
+              <div className="ledger-row" key={run.id}>
+                <div>
+                  <strong>
+                    {run.config.market ?? "Campaign"} · {run.status}
+                  </strong>
+                  <span>
+                    {date(run.createdAt)} · {run.discovered} collected ·{" "}
+                    {run.processed + run.failed} screened · {run.qualified ?? 0}{" "}
+                    qualified · {run.sentCount ?? 0} emails accepted
+                  </span>
+                  <span>
+                    {run.config.locations} · Limit{" "}
+                    {money(run.config.budgetUsd ?? settings.runBudgetUsd)}
+                  </span>
+                </div>
+                <div>
+                  <strong>{money(cost?.spentUsd ?? 0)}</strong>
+                  <span>{money(cost?.reservedUsd ?? 0)} held</span>
+                  <span>
+                    {run.qualified && cost
+                      ? `${money(cost.spentUsd / run.qualified)} / qualified`
+                      : "No qualified prospects yet"}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <Empty>Start a campaign to compare its spend and results.</Empty>
+        )}
+      </div>
       <div className="panel ledger-panel">
         <h2>Usage ledger</h2>
         <p>
@@ -2092,8 +2306,10 @@ function Learning({
         <p>
           Each business keeps its base score, adjustment, and learning version.
           Outcomes are saved as an audit trail; repeated edits to one business
-          count as one example. This is feedback-based calibration, not model
-          retraining. Budget and contact permissions stay under your control.
+          count as one example. Five matching industry/service examples can
+          guide discovery priorities within your chosen search. This is
+          feedback-based calibration, not model retraining. Budget and contact
+          permissions stay under your control.
         </p>
         <div className="learning-groups">
           {groups.map((g, i) => (
@@ -2162,7 +2378,7 @@ function FocusSettings({
             targetLocations: String(f.get("locations")),
             services: String(f.get("services")),
             researchLimit: Number(f.get("count")),
-            callingCode: String(f.get("code")),
+            searchCountry: String(f.get("country")),
           });
           setMessage("Defaults saved.");
         } catch (e) {
@@ -2170,7 +2386,7 @@ function FocusSettings({
         }
       }}
     >
-      <h2>Business & campaign defaults</h2>
+      <h2>Business & search defaults</h2>
       <label>
         Business name
         <input
@@ -2230,13 +2446,18 @@ function FocusSettings({
           />
         </label>
         <label>
-          Phone country code
-          <input
-            name="code"
-            pattern="[0-9]{1,3}"
-            defaultValue={settings.callingCode}
+          Default search country
+          <select
+            name="country"
+            defaultValue={settings.searchCountry ?? "ZA"}
             disabled={!canManage}
-          />
+          >
+            {countries.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
       <p>
@@ -2261,10 +2482,11 @@ function WhatsAppSetup({
 }) {
   const [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false);
-  const [callback, setCallback] = useState("");
-  useEffect(() => {
-    setCallback(`${window.location.origin}/api/whatsapp/webhook`);
-  }, []);
+  const [callback] = useState(() =>
+    typeof window === "undefined"
+      ? "/api/whatsapp/webhook"
+      : `${window.location.origin}/api/whatsapp/webhook`,
+  );
   return (
     <div className="panel settings-panel">
       <h2>WhatsApp Business connection</h2>

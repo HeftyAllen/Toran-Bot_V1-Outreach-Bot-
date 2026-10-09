@@ -14,7 +14,7 @@
     "db:generate": "drizzle-kit generate",
     "build:cloud-run": "node scripts/build-cloud-run.mjs",
     "start:cloud-run": "node scripts/start-cloud-run.mjs",
-    "test:bot": "node --experimental-strip-types --test tests/bot.test.ts",
+    "test:bot": "node --experimental-strip-types --test tests/bot.test.ts tests/smart.test.ts",
     "test:cloud-run": "node tests/cloud-run-smoke.mjs",
     "test:auth": "node --experimental-strip-types --test tests/password-hash.test.ts && node tests/password-worker.mjs"
   },
@@ -29,6 +29,7 @@
     "drizzle-orm": "0.45.2",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
+    "libphonenumber-js": "1.13.15",
     "lucide-react": "^1.31.0",
     "next": "16.3.4",
     "next-themes": "^0.4.6",

@@ -24,6 +24,8 @@ export async function GET() {
       messages,
       inbound,
       wa,
+      providers,
+      runSpending,
     ] = await Promise.all([
       settingsRow(),
       db.select<Record<string, unknown>>("leads", {
@@ -49,7 +51,7 @@ export async function GET() {
         limit: 1000,
       }),
       db.select("outreach_messages", {
-        select: "id,lead_id,kind,template_name,status,error,created_at",
+        select: "id,lead_id,channel,kind,template_name,status,error,created_at",
         order: "created_at.desc",
         limit: 100,
       }),
@@ -63,6 +65,8 @@ export async function GET() {
         id: "eq.1",
         limit: 1,
       }),
+      db.select("provider_connections", { select: "id,settings" }),
+      db.rpc("bot1_run_spend", {}),
     ]);
     return Response.json(
       {
@@ -83,6 +87,8 @@ export async function GET() {
         messages,
         inbound,
         whatsapp: wa[0] ?? null,
+        providers,
+        runSpending,
         role: member.role,
       },
       { headers: { "Cache-Control": "no-store" } },

@@ -1,4 +1,6 @@
-export type CampaignConfig = {
+import type { SearchOptions } from "./search-config.ts";
+import { countryPhone } from "./search-config.ts";
+export type CampaignConfig = SearchOptions & {
   market: string;
   locations: string;
   services: string;
@@ -58,6 +60,7 @@ export function officialWebsite(raw: unknown) {
   const url = publicUrl(raw);
   if (!url) return null;
   const host = new URL(url).hostname.replace(/^www\./, "");
+  if (host === "sites.google.com" && /^\/(?:view|site)\//.test(new URL(url).pathname)) return url;
   const platforms = ["facebook.com", "fb.com", "instagram.com", "linkedin.com", "tiktok.com", "twitter.com", "x.com", "youtube.com", "whatsapp.com", "wa.me", "google.com", "google.co.za", "goo.gl", "maps.app.goo.gl", "tripadvisor.com", "tripadvisor.co.za", "restaurantguru.com", "restaurantguru.co.za", "restaurants.co.za", "brabys.com", "sayellow.com", "snupit.co.za", "yelp.com", "eatout.co.za", "cylex.net.za", "africabizinfo.com", "firmania.co.za"];
   return platforms.some(domain => host === domain || host.endsWith(`.${domain}`)) ? null : url;
 }
@@ -79,6 +82,7 @@ export function officialSourceWebsite(companyName: string, sources: string[]) {
   return null;
 }
 export function normalizePhone(raw: string, callingCode = "27"): string | null {
+  if (/^[A-Z]{2}$/i.test(callingCode)) return countryPhone(raw, callingCode.toUpperCase());
   const clean = raw
     .replace(/\(0\)/g, "")
     .replace(/(?:ext\.?|extension|x)\s*\d+$/i, "")
@@ -223,6 +227,15 @@ export function latestFeedback(history: Feedback[]) {
     return true;
   });
 }
+export function discoverySignals(history: Feedback[], category: string) {
+  const normalize = (text: string) => text.toLowerCase().trim().replace(/s$/, "");
+  const matches = latestFeedback(history).filter(x => x.category && normalize(x.category) === normalize(category));
+  if (matches.length < 5) return [];
+  return ["Launch", "Sell", "Scale"].map(service => {
+    const examples = matches.filter(x => x.service_fit === service);
+    return {service, samples: examples.length, positive: examples.filter(x => ["good_fit", "replied", "booked", "won"].includes(x.outcome)).length};
+  }).filter(x => x.samples >= 5);
+}
 export function calibration(
   history: Feedback[],
   service: string,
@@ -323,7 +336,7 @@ function citationKey(raw: string) {
 }
 
 export function verifyDiscovery(candidate: DiscoveredBusiness, sources: string[]) {
-  const source = publicUrl(candidate.sourceUrl);
+  const source = researchSourceUrl(candidate.sourceUrl);
   if (!source || !candidate.companyName?.trim() || !candidate.region?.trim())
     return null;
   const retrieved = sources.map(publicUrl).filter((x): x is string => Boolean(x));
@@ -339,6 +352,13 @@ export function verifyDiscovery(candidate: DiscoveredBusiness, sources: string[]
   return { sourceUrl, websiteUrl: websiteVerified ? website : officialSourceWebsite(candidate.companyName, retrieved) };
 }
 
+export function researchSourceUrl(raw: unknown) {
+  const result = publicUrl(raw);
+  if (!result) return null;
+  const url = new URL(result);
+  if (["g.page", "g.co", "goo.gl", "maps.app.goo.gl"].includes(url.hostname) || /^maps\.google\./.test(url.hostname) || /(^|\.)google\.[a-z.]+$/.test(url.hostname) && /^\/(?:maps|local|search)(?:\/|$)/.test(url.pathname)) return null;
+  return result;
+}
 export function discoveryContinues(requested: number, saved: number, rounds: number) {
   return saved < requested && rounds < Math.max(3, Math.ceil(requested / 5) + 2);
 }
@@ -367,7 +387,9 @@ export type Opportunity = {
   checks: WebsiteChecks | null;
   officialSearch: { checkedAt: string; sources: string[] } | null;
   checkedAt: string;
+  mobileAudit?: MobileAudit | null;
 };
+export type MobileAudit = { status: "complete" | "unavailable"; checkedAt: string; url: string; performance: number | null; accessibility: number | null; lcpMs: number | null; cls: number | null; screenshot: string | null; issues: string[]; error?: string };
 export function websiteChecks(html: string, url: string, officialWebsite = true): WebsiteChecks {
   const text = visibleText(html);
   return {
@@ -409,6 +431,9 @@ export function qualifyOpportunity(input: {
     opportunityReason: string;
     opportunityEvidence: OpportunityEvidence[];
   };
+  websiteFilter?: SearchOptions["websiteFilter"];
+  includeAutomation?: boolean;
+  mobileAudit?: MobileAudit | null;
 }): Opportunity {
   const { assessment: a, checks, focus = "all_opportunities" } = input;
   // Evidence must be copied from a page that was actually fetched. A model's
@@ -422,7 +447,11 @@ export function qualifyOpportunity(input: {
   let status: Opportunity["status"] = "review", service: Opportunity["service"] = "No clear fit";
   let reason = "Public evidence does not establish a specific Toran opportunity yet.";
   let websiteStatus: Opportunity["websiteStatus"] = "unknown";
-  const weak = !!input.websiteUrl && (checks.placeholder || !checks.viewport && checks.fixedDesktopWidth);
+  const measuredSlow = input.mobileAudit?.status === "complete" && (input.mobileAudit.performance ?? 100) < 40 && (input.mobileAudit.lcpMs ?? 0) > 4000;
+  const weak = !!input.websiteUrl && (checks.placeholder || !checks.viewport && checks.fixedDesktopWidth || measuredSlow);
+  const permitMissing = !input.websiteFilter || ["missing", "missing_or_weak", "any"].includes(input.websiteFilter);
+  const permitWeak = !input.websiteFilter || ["weak", "missing_or_weak", "any"].includes(input.websiteFilter);
+  const permitAutomation = input.includeAutomation === undefined ? focus !== "website_gaps" : input.includeAutomation;
   if (weak) websiteStatus = "weak";
   else if (input.websiteUrl && a.websiteStatus === "healthy") websiteStatus = "healthy";
   const manual = evidence.filter(e => e.kind === "manual_workflow" &&
@@ -440,16 +469,22 @@ export function qualifyOpportunity(input: {
   } else if (a.targetMatch !== true) {
     status = "not_fit";
     reason = "This business does not match the requested business type and location.";
-  } else if (focus !== "automation" && (weak || !input.websiteUrl && input.identityConfirmed && (input.officialSearch?.sources.length ?? 0) > 0)) {
+  } else if (input.websiteFilter === "missing" && input.websiteUrl && !permitAutomation) {
+    status = "not_fit";
+    reason = "An official website exists; this campaign is restricted to businesses with no official site found.";
+  } else if (input.websiteFilter === "weak" && !input.websiteUrl && !permitAutomation) {
+    status = "not_fit";
+    reason = "This campaign targets existing weak websites; an official website has not been established for this business.";
+  } else if (focus !== "automation" && (weak && permitWeak || permitMissing && !input.websiteUrl && input.identityConfirmed && (input.officialSearch?.sources.length ?? 0) > 0)) {
     status = "qualified"; service = "Launch";
     websiteStatus = weak ? "weak" : "not_found";
     reason = weak
-      ? checks.placeholder ? "The fetched website is a placeholder or under construction." : "The fetched HTML has a fixed desktop width and no mobile viewport metadata; a mobile rebuild is worth reviewing."
+      ? checks.placeholder ? "The fetched website is a placeholder or under construction." : measuredSlow ? "A mobile Lighthouse lab test measured slow loading; review a performance rebuild with the owner." : "The fetched HTML has a fixed desktop width and no mobile viewport metadata; a mobile rebuild is worth reviewing."
       : "No official website was found in a business-specific search. Offer a digital presence; confirm with the owner before claiming they have no site.";
-  } else if (focus !== "website_gaps" && a.serviceFit === "Sell" && commerce.length) {
+  } else if (permitAutomation && a.serviceFit === "Sell" && commerce.length) {
     status = "qualified"; service = "Sell";
     reason = "A public ordering or payment instruction suggests an ecommerce opportunity; confirm the current process with the owner.";
-  } else if (focus !== "website_gaps" && a.serviceFit === "Scale" && manual.length) {
+  } else if (permitAutomation && a.serviceFit === "Scale" && manual.length) {
     status = "qualified"; service = "Scale";
     reason = "A public manual ordering, booking or quotation step suggests an automation opportunity; internal systems still need confirmation.";
   } else if (input.websiteUrl && a.websiteStatus === "healthy" && !manual.length && !commerce.length) {
@@ -457,7 +492,7 @@ export function qualifyOpportunity(input: {
     reason = "The site appears established and no specific website, ecommerce or automation gap was supported by the checked pages.";
   }
   return { version: 2, status, service, websiteStatus, reason, evidence, checks,
-    officialSearch: input.officialSearch, checkedAt: new Date().toISOString() };
+    officialSearch: input.officialSearch, mobileAudit: input.mobileAudit ?? null, checkedAt: new Date().toISOString() };
 }
 export function opportunityScore(score: number, opportunity: Opportunity, feedbackDelta = 0) {
   const maximum = opportunity.status === "qualified" ? 90 : opportunity.status === "review" ? 39 : 15;
