@@ -3,13 +3,47 @@ import { test } from "node:test";
 import {
   calibration,
   csvCell,
+  discoveryContinues,
   estimateOpenAICost,
   extractContacts,
   latestFeedback,
   normalizePhone,
   publicUrl,
+  searchSources,
+  verifyDiscovery,
 } from "../lib/bot-core.ts";
 import type { Feedback } from "../lib/bot-core.ts";
+
+test("directory evidence keeps a business while an unsupported official website stays unconfirmed", () => {
+  const candidate = {
+    companyName: "Synthetic Sandton restaurant", region: "Sandton, South Africa",
+    category: "Restaurant", sourceUrl: "https://directory.example.com/sandton/restaurants/",
+    websiteUrl: "https://unconfirmed.example.com/",
+  };
+  const source = "https://directory.example.com/sandton/restaurants/?utm_source=search";
+  const response = { output: [
+    { type: "web_search_call", action: { sources: [{ url: source }] } },
+    { type: "message", content: [{ annotations: [{ type: "url_citation", url: source }] }] },
+  ] };
+  const sources = searchSources(response);
+  assert.deepEqual(verifyDiscovery(candidate, sources), { sourceUrl: source, websiteUrl: null });
+  assert.equal(verifyDiscovery({ ...candidate, sourceUrl: "https://invented.example.com/" }, sources), null);
+  assert.equal(verifyDiscovery({ ...candidate, sourceUrl: "https://directory.example.com/sandton/restaurants/?id=other" }, sources), null);
+  assert.equal(verifyDiscovery({ ...candidate, sourceUrl: "https://127.0.0.1/" }, sources), null);
+  assert.equal(verifyDiscovery({ ...candidate, companyName: "" }, sources), null);
+  assert.equal(verifyDiscovery({ ...candidate, region: "" }, sources), null);
+  assert.deepEqual(verifyDiscovery(candidate, [...sources, "https://unconfirmed.example.com/contact"]), {
+    sourceUrl: source, websiteUrl: "https://unconfirmed.example.com/",
+  });
+});
+
+test("an empty first batch allows bounded retries without extending the campaign target", () => {
+  assert.equal(discoveryContinues(1, 0, 1), true);
+  assert.equal(discoveryContinues(1, 0, 2), true);
+  assert.equal(discoveryContinues(1, 0, 3), false);
+  assert.equal(discoveryContinues(5, 5, 1), false);
+  assert.equal(discoveryContinues(100, 20, 22), false);
+});
 test("public website validation rejects credentials, metadata and private/IP addresses", () => {
   for (const url of [
     "http://example.com",

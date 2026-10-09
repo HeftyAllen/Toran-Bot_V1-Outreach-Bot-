@@ -245,6 +245,46 @@ export function searchSources(data: Record<string, unknown>) {
   }
   return [...urls].map(publicUrl).filter((x): x is string => Boolean(x));
 }
+
+export type DiscoveredBusiness = {
+  companyName: string;
+  websiteUrl: string;
+  region: string;
+  category: string;
+  sourceUrl: string;
+};
+
+// Preserve the actual retrieved URL. Ignore only common tracking parameters and
+// a trailing slash when matching a model's citation to the search source list.
+function citationKey(raw: string) {
+  const url = new URL(raw);
+  for (const key of [...url.searchParams.keys()])
+    if (/^utm_/i.test(key) || /^(fbclid|gclid|msclkid)$/i.test(key))
+      url.searchParams.delete(key);
+  url.searchParams.sort();
+  return `${url.origin}${url.pathname.replace(/\/$/, "")}${url.search}`;
+}
+
+export function verifyDiscovery(candidate: DiscoveredBusiness, sources: string[]) {
+  const source = publicUrl(candidate.sourceUrl);
+  if (!source || !candidate.companyName?.trim() || !candidate.region?.trim())
+    return null;
+  const retrieved = sources.map(publicUrl).filter((x): x is string => Boolean(x));
+  const sourceUrl = retrieved.find((url) => citationKey(url) === citationKey(source));
+  if (!sourceUrl) return null;
+  const website = publicUrl(candidate.websiteUrl);
+  const websiteVerified = website && retrieved.some((url) =>
+    new URL(url).hostname.replace(/^www\./, "") ===
+    new URL(website).hostname.replace(/^www\./, ""),
+  );
+  // A directory can establish the business without establishing an official
+  // website. Keep the sourced business and leave that website unconfirmed.
+  return { sourceUrl, websiteUrl: websiteVerified ? website : null };
+}
+
+export function discoveryContinues(requested: number, saved: number, rounds: number) {
+  return saved < requested && rounds < Math.max(3, Math.ceil(requested / 5) + 2);
+}
 export function csvCell(value: unknown) {
   let text = String(value ?? "");
   if (/^[\s]*[=+\-@]/.test(text)) text = "'" + text;

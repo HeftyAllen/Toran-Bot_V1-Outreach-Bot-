@@ -11,6 +11,7 @@ const members=[{email:'owner@example.test',role:'owner'}, {email:'viewer@example
 const settings={id:1,brand_name:'Toran test',brand_domain:'',target_market:'Restaurants',target_locations:'Sandton, South Africa',services:'Websites',automation_enabled:true,research_limit:3,run_budget_usd:1,monthly_budget_usd:5,whatsapp_unit_cost_usd:null,calling_code:'27'};
 const runs=[];const lead={id:'test-lead',company_name:'Test restaurant',website_url:'https://example.com',region:'Sandton',status:'queued',evidence:[],contact_sources:[],do_not_contact:false,fit_score:null,created_at:new Date().toISOString()};
 const tables={workspace_settings:[settings],leads:[lead],runs,feedback_events:[],usage_events:[],outreach_messages:[],whatsapp_inbound:[],whatsapp_connection:[]};
+let workerEnabled=false;
 const mock=createServer(async(req,res)=>{const url=new URL(req.url,'http://mock');const table=url.pathname.replace('/rest/v1/','');res.setHeader('Content-Type','application/json');let rows;
   if(table==='workspace_members'){
     const email=(url.searchParams.get('email')??'').replace('eq.','');
@@ -19,12 +20,23 @@ const mock=createServer(async(req,res)=>{const url=new URL(req.url,'http://mock'
     rows=members.filter(x=>(!email||x.email===email)&&(!token||x.invite_token_hash===token)&&(!expiry||(x.invite_expires_at&&x.invite_expires_at>expiry)));
     if(req.method==='PATCH'){let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');rows.forEach(x=>Object.assign(x,input));}
   }
-  else if(table.startsWith('rpc/'))rows=table==='rpc/bot1_usage_summary'?{monthEstimatedUsd:0,monthActualUsd:0,monthReservedUsd:0,allTimeEstimatedUsd:0,allTimeActualUsd:0,unconfirmedCount:0,inputTokens:0,outputTokens:0,searchCalls:0,trackingSince:null}:[];
+  else if(table.startsWith('rpc/')){
+    let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');
+    if(table==='rpc/bot1_usage_summary')rows={monthEstimatedUsd:0,monthActualUsd:0,monthReservedUsd:0,allTimeEstimatedUsd:0,allTimeActualUsd:0,unconfirmedCount:0,inputTokens:0,outputTokens:0,searchCalls:0,trackingSince:null};
+    else if(table==='rpc/bot1_claim_run'){
+      const job=workerEnabled?runs.find(x=>x.status==='running'):undefined;
+      if(job){job.lease_token=input.p_token;job.search_rounds??=0;}
+      rows=job?[job]:[];
+    }else if(table==='rpc/bot1_reserve_cost'){
+      const id=`synthetic-usage-${tables.usage_events.length}`;
+      tables.usage_events.push({id,run_id:input.p_run_id,kind:input.p_kind,reserved_usd:input.p_max_usd});rows=id;
+    }else rows=[];
+  }
   else{rows=tables[table]??[];if(req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');rows.push({...input,processed:0,failed:0,discovered:0,created_at:new Date().toISOString()});rows=[rows.at(-1)];}else if(req.method==='PATCH'){let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');const id=(url.searchParams.get('id')??'').replace('eq.','');rows=rows.filter(x=>!id||x.id===id);rows.forEach(x=>Object.assign(x,input));}}
   res.end(JSON.stringify(rows));
 });
 await new Promise(r=>mock.listen(0,'127.0.0.1',r));const dbPort=mock.address().port;const port=4267;
-let output='';const child=spawn(process.execPath,['scripts/start-cloud-run.mjs'],{env:{...process.env,HOSTNAME:'127.0.0.1',PORT:String(port),APP_RUNTIME:'cloud-run',SUPABASE_URL:`http://127.0.0.1:${dbPort}`,SUPABASE_SECRET_KEY:'sb_secret_SYNTHETIC_TEST',APP_SESSION_SECRET:sessionSecret,APP_ENCRYPTION_SECRET:sessionSecret,WORKER_SECRET:workerSecret,OPENAI_API_KEY:'synthetic-never-used',OWNER_EMAIL:'owner@example.test'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',d=>output+=d);child.stderr.on('data',d=>output+=d);
+let output='';const child=spawn(process.execPath,['scripts/start-cloud-run.mjs'],{env:{...process.env,NODE_OPTIONS:'--import ./tests/discovery-fetch.mjs',HOSTNAME:'127.0.0.1',PORT:String(port),APP_RUNTIME:'cloud-run',SUPABASE_URL:`http://127.0.0.1:${dbPort}`,SUPABASE_SECRET_KEY:'sb_secret_SYNTHETIC_TEST',APP_SESSION_SECRET:sessionSecret,APP_ENCRYPTION_SECRET:sessionSecret,WORKER_SECRET:workerSecret,OPENAI_API_KEY:'synthetic-never-used',OWNER_EMAIL:'owner@example.test'},stdio:['ignore','pipe','pipe']});child.stdout.on('data',d=>output+=d);child.stderr.on('data',d=>output+=d);
 function cookie(email){const payload=Buffer.from(JSON.stringify({email,expiresAt:Math.floor(Date.now()/1000)+600})).toString('base64url');return `bot1_session=${payload}.${createHmac('sha256',sessionSecret).update(payload).digest('base64url')}`;}
 async function call(path,method='GET',body,auth){return fetch(`http://127.0.0.1:${port}${path}`,{method,redirect:'manual',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...(auth?{Cookie:auth.startsWith('bot1_session=')?auth:cookie(auth)}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});}
 try{
@@ -56,5 +68,17 @@ try{
   const worker=await fetch(`http://127.0.0.1:${port}/api/jobs/work`,{method:'POST',headers:{Authorization:`Bearer ${workerSecret}`}});assert.equal(worker.status,200);
   assert.equal((await call(`/api/run?id=${runs[0].id}`,'DELETE',undefined,'owner@example.test')).status,200);assert.equal(runs[0].status,'canceled');
   const exportResponse=await call('/api/export','GET',undefined,'owner@example.test');assert.equal(exportResponse.status,200);assert.ok((await exportResponse.text()).includes('Test restaurant'));
-  console.log('Cloud Run smoke passed: password creation, login, change, logout, partner invitations, single-use/expiry, standalone assets, forged-header rejection, viewer restrictions, campaign queue/cancel, worker authentication, CSV export. No external calls made.');
+  workerEnabled=true;
+  const discovery=await call('/api/run','POST',{count:2,market:'Restaurants',locations:'Sandton, South Africa',budgetUsd:.5,callingCode:'27'},'owner@example.test');assert.equal(discovery.status,202);const runId=(await discovery.json()).id;
+  const run=runs.find(x=>x.id===runId);
+  const tick=async()=>{const response=await fetch(`http://127.0.0.1:${port}/api/jobs/work`,{method:'POST',headers:{Authorization:`Bearer ${workerSecret}`}});assert.equal(response.status,200);const result=await response.json();assert.equal(result.error,undefined);return result;};
+  await tick();assert.equal(run.status,'running','An empty first search must not end the campaign');assert.equal(run.search_rounds,1);
+  await tick();assert.equal(run.status,'running');assert.equal(run.search_rounds,2);
+  await tick();assert.equal(run.discovered,2);assert.equal(run.stage,'research');assert.equal(run.search_rounds,3);
+  assert.equal(tables.leads.find(x=>x.company_name==='Synthetic directory restaurant').website_url,null,'Unsupported website must not erase a sourced business');
+  assert.equal(tables.leads.find(x=>x.company_name==='Synthetic official restaurant').website_url,'https://restaurant-two.example.com/');
+  assert.equal(tables.usage_events[2].metadata.discovery.saved,2);assert.equal(tables.usage_events[2].metadata.discovery.unconfirmedWebsites,1);
+  const overview=await (await call('/api/overview','GET',undefined,'owner@example.test')).json();assert.ok(overview.leads.some(x=>x.companyName==='Synthetic directory restaurant'),'Saved discoveries must reach the dashboard API');
+  assert.equal((await call(`/api/run?id=${runId}`,'DELETE',undefined,'owner@example.test')).status,200);assert.equal((await tick()).worked,false);
+  console.log('Cloud Run smoke passed: authentication, invitations, role restrictions, campaign queue/cancel, worker authentication, empty-search retries, verified directory listings, discovery persistence and dashboard results, CSV export. No external calls made.');
 }finally{child.kill('SIGTERM');mock.close();await new Promise(resolve=>child.once('exit',resolve));}

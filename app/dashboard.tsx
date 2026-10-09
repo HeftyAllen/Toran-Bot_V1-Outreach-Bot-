@@ -1155,6 +1155,9 @@ function Runs({ runs }: { runs: Run[] }) {
             <span>
               {r.config.locations ?? ""} · {date(r.createdAt)} · {r.status}
             </span>
+            {r.requested > 0 && (
+              <span>{r.discovered}/{r.requested} new businesses saved · {r.processed} researched · {r.failed} failed</span>
+            )}
           </div>
         </div>
       ))}
