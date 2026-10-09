@@ -12,7 +12,7 @@ import {
   searchSources,
   verifyDiscovery,
   digitalServiceProvider, websiteChecks, qualifyOpportunity, opportunityScore,
-  officialWebsite, extractListingContacts,
+  officialWebsite, extractListingContacts, businessListingIdentity,
 } from "../lib/bot-core.ts";
 import type { Feedback, OpportunityEvidence } from "../lib/bot-core.ts";
 
@@ -62,6 +62,14 @@ test("a missing URL needs a business-specific search and confirmed business iden
   assert.equal(qualified.status, "qualified");assert.equal(qualified.websiteStatus, "not_found");
   assert.match(qualified.reason,/confirm with the owner/);
   assert.equal(prospect(html, {}, { websiteUrl: null, officialSearch, identityConfirmed: false }).status,"review");
+  assert.equal(prospect(html, {}, { websiteUrl: null, officialSearch, identityConfirmed: false }).websiteStatus,"unknown");
+});
+test("a category directory mentioning a business cannot confirm its individual page", () => {
+  const collection='<title>Restaurants in Midrand</title><h1>Midrand restaurants</h1><h2>Wanted Restaurant</h2>';
+  assert.equal(businessListingIdentity(collection,'Wanted Restaurant'),false);
+  const individual='<title>Wanted Restaurant, Midrand | Business Directory</title><h1>Wanted Restaurant</h1>';
+  assert.equal(businessListingIdentity(individual,'Wanted Restaurant'),true);
+  assert.equal(businessListingIdentity(individual,'Other Restaurant'),false);
 });
 test("a decent site can qualify for automation only with an exact, relevant workflow quote", () => {
   const quote="To reserve a table, call our bookings team.";

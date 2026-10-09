@@ -96,5 +96,17 @@ try{
   await tick();await tick();assert.equal(moreRun.qualified,1);assert.equal(moreRun.status,'complete');
   const qualified=tables.leads.find(x=>x.company_name==='Synthetic weak restaurant');assert.equal(qualified.opportunity.service,'Launch');assert.equal(qualified.opportunity.websiteStatus,'weak');assert.equal(qualified.status,'drafted');assert.ok(qualified.phone);
   const exported=await (await call('/api/export','GET',undefined,'owner@example.test')).text();assert.ok(exported.includes('opportunity_status'));assert.ok(exported.includes('Synthetic weak restaurant'));
-  console.log('Cloud Run smoke passed: auth/access, campaign controls, bounded empty-search retries, agency exclusions, missing-site lookup, healthy-site rejection, opportunity target continuation, weak-site qualification, saved contacts/drafts and dashboard/CSV results. No external calls made.');
+  lead.status='reviewed';
+  const chain={id:'synthetic-brand-lead',company_name:'Synthetic chain restaurant',website_url:null,discovery_source_url:'https://directory.example.com/sandton/restaurant-one/',region:'Sandton, South Africa',category:'Restaurant',status:'queued',opportunity:null,contact_sources:[]};
+  tables.leads.push(chain);
+  const brandRunResponse=await call('/api/run','POST',{mode:'queue',count:1,budgetUsd:.5,focus:'website_gaps'},'owner@example.test');assert.equal(brandRunResponse.status,202);
+  const brandRunId=(await brandRunResponse.json()).id;
+  const brandRun=runs.find(x=>x.id===brandRunId);
+  await tick();assert.equal(chain.website_url,'https://restaurant-brand.example.com/','A branch must retain its existing parent-brand website');assert.equal(chain.opportunity.websiteStatus,'unknown');
+  await tick();assert.equal(brandRun.status,'complete');assert.equal(brandRun.qualified,0);assert.equal(chain.opportunity.status,'not_fit');assert.equal(chain.draft_body,null);
+  const collection={id:'synthetic-collection-lead',company_name:'Synthetic collection restaurant',website_url:null,discovery_source_url:'https://directory.example.com/sandton/restaurants/',region:'Sandton, South Africa',category:'Restaurant',status:'queued',opportunity:null,contact_sources:[]};
+  tables.leads.push(collection);
+  const collectionResponse=await call('/api/run','POST',{mode:'queue',count:1,budgetUsd:.5,focus:'website_gaps'},'owner@example.test');assert.equal(collectionResponse.status,202);
+  await tick();await tick();assert.equal(collection.opportunity.status,'review');assert.equal(collection.opportunity.websiteStatus,'unknown');assert.equal(collection.draft_body,null);assert.ok(collection.fit_score<=39);
+  console.log('Cloud Run smoke passed: auth/access, campaign controls, bounded empty-search retries, agency exclusions, missing-site/brand lookup, individual listing checks, healthy-site rejection, opportunity target continuation, weak-site qualification, saved contacts/drafts and dashboard/CSV results. No external calls made.');
 }finally{child.kill('SIGTERM');mock.close();await new Promise(resolve=>child.once('exit',resolve));}

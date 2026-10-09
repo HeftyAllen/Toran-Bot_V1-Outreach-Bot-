@@ -12,11 +12,15 @@ const directory='https://directory.example.com/sandton/restaurant-one/';
 const good='https://restaurant-two.example.com/';
 const nice='https://restaurant-nice.example.com/';
 const weak='https://restaurant-weak.example.com/';
+const brand='https://restaurant-brand.example.com/';
+const collection='https://directory.example.com/sandton/restaurants/';
 const fixtures = new Map([
   [directory,'<h1>Synthetic directory restaurant</h1><p>Restaurant in Sandton, South Africa.</p>'],
   [good,'<title>Synthetic official restaurant</title><meta name="viewport" content="width=device-width"><h1>Synthetic official restaurant</h1><p>View our menu, order online or use our online reservations.</p>'],
   [nice,'<title>Synthetic nice restaurant</title><meta name="viewport" content="width=device-width"><h1>Synthetic nice restaurant</h1><p>Online ordering, payments and reservations are available.</p>'],
   [weak,'<title>Synthetic weak restaurant</title><h1>Synthetic weak restaurant</h1><p>Our website is under construction.</p><a href="tel:+27112345678">Phone</a>'],
+  [brand,'<title>Synthetic chain restaurant</title><meta name="viewport" content="width=device-width"><h1>Synthetic chain restaurant</h1><p>Find your local branch and order online with online payments.</p>'],
+  [collection,'<title>Restaurants in Sandton</title><h1>Sandton restaurants</h1><h2>Synthetic collection restaurant</h2><p>Other restaurant listings</p>'],
 ]);
 function fixture(raw) { const url=new URL(raw); url.search='';return fixtures.get(url.href); }
 dns.lookup = async (host, options) => host.endsWith('.example.com')
@@ -53,8 +57,16 @@ globalThis.fetch = async (input, init) => {
       make('Synthetic official restaurant',good,good+'about/'),
     ]:searches===4?[make('Synthetic nice restaurant',nice,nice)]:[make('Synthetic weak restaurant',weak,weak)]};
   }else if(name==='official_website_lookup'){
-    assert.equal(payload.name,'Synthetic directory restaurant');
-    sources=[directory];result={websiteUrl:'',sourceUrl:''};
+    assert.match(body.input[0].content[0].text,/parent or franchise brand website/i);
+    assert.equal(payload.listing,undefined,'Directory URLs must not bias the official-site query');
+    if(payload.name==='Synthetic chain restaurant'){
+      sources=[brand];result={websiteUrl:brand,sourceUrl:brand};
+    }else if(payload.name==='Synthetic collection restaurant'){
+      sources=[collection];result={websiteUrl:'',sourceUrl:''};
+    }else{
+      assert.equal(payload.name,'Synthetic directory restaurant');
+      sources=[directory];result={websiteUrl:'',sourceUrl:''};
+    }
   }else{
     assert.equal(name,'lead_review');assert.equal(body.model,'gpt-4o-mini');
     assert.ok(payload.pages.every(p=>fixture(p.url)));

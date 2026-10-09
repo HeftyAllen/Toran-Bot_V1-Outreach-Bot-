@@ -25,9 +25,12 @@ research of rejected candidates as well as successful leads.
 
 - Launch: a fetched placeholder/under-construction site, or fixed desktop-width
   HTML without mobile viewport metadata. If an official site is unconfirmed,
-  a separate search of the business name and city checks for one. A matching
-  business listing plus no official site found can qualify a potential launch;
+  a separate broad search of the business/brand name checks for one, including
+  parent-brand websites and branch locators. An individual business listing
+  identified by its title/main heading plus no official site found can qualify a potential launch;
   the bot never treats a missing result as proof no website exists.
+  A category directory that merely mentions the name stays in review, and
+  website status remains unknown until its business page can be verified.
 - Sell: an exact public instruction for manual orders/payments supports a
   potential checkout/order-handling opportunity.
 - Scale: an exact public manual order, booking, appointment or quotation

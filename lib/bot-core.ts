@@ -363,6 +363,16 @@ export function websiteChecks(html: string, url: string, officialWebsite = true)
     checkedUrl: url,
   };
 }
+export function businessListingIdentity(html: string, companyName: string) {
+  const normalize = (value: string) => visibleText(value).toLowerCase()
+    .replace(/&amp;/g, "&").replace(/[^a-z0-9]+/g, " ").trim();
+  const name = normalize(companyName);
+  if (name.length < 3) return false;
+  // A name in a category list or footer does not establish an individual
+  // business page. Its main heading or page title must identify the business.
+  return [...html.matchAll(/<(title|h1)\b[^>]*>([\s\S]*?)<\/\1>/gi)]
+    .some(match => ` ${normalize(match[2])} `.includes(` ${name} `));
+}
 export function digitalServiceProvider(category: string | null | undefined) {
   return /\b(?:web(?:site)? (?:design|development)|digital marketing|(?:web|marketing|seo) agency|ecommerce (?:development|solutions)|software development)\b/i.test(category ?? "");
 }
@@ -394,7 +404,7 @@ export function qualifyOpportunity(input: {
   ).slice(0, 6).map(e => ({ ...e, quote: e.quote.trim().slice(0, 600), observation: e.observation.slice(0, 600) }));
   let status: Opportunity["status"] = "review", service: Opportunity["service"] = "No clear fit";
   let reason = "Public evidence does not establish a specific Toran opportunity yet.";
-  let websiteStatus: Opportunity["websiteStatus"] = input.websiteUrl ? "unknown" : "not_found";
+  let websiteStatus: Opportunity["websiteStatus"] = "unknown";
   const weak = !!input.websiteUrl && (checks.placeholder || !checks.viewport && checks.fixedDesktopWidth);
   if (weak) websiteStatus = "weak";
   else if (input.websiteUrl && a.websiteStatus === "healthy") websiteStatus = "healthy";
@@ -411,6 +421,7 @@ export function qualifyOpportunity(input: {
       : "This business does not match the requested business type and location.";
   } else if (focus !== "automation" && (weak || !input.websiteUrl && input.identityConfirmed && (input.officialSearch?.sources.length ?? 0) > 0)) {
     status = "qualified"; service = "Launch";
+    websiteStatus = weak ? "weak" : "not_found";
     reason = weak
       ? checks.placeholder ? "The fetched website is a placeholder or under construction." : "The fetched HTML has a fixed desktop width and no mobile viewport metadata; a mobile rebuild is worth reviewing."
       : "No official website was found in a business-specific search. Offer a digital presence; confirm with the owner before claiming they have no site.";
