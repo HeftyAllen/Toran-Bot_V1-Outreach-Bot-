@@ -14,6 +14,11 @@ could use, rather than rewarding the business for selling those same services.
 Web designers, marketing agencies and ecommerce-development vendors are
 excluded from the customer list. Ecommerce targets are merchants, not vendors
 who build ecommerce software.
+Agency exclusions require support from the sourced category or page title.
+An unsupported provider flag stays in review. The scoring stage uses
+`gpt-4.1-mini`, with a conservative spending reservation and the same output
+token limit. It receives the business identity and current pages, not an earlier
+opportunity assessment as part of the business description.
 
 ## Evidence and qualification
 

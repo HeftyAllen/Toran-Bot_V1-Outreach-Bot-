@@ -66,6 +66,12 @@ test("website gaps require observable signals instead of an AI opinion about des
   assert.equal(merelyNoViewport.status, "review"); assert.equal(merelyNoViewport.websiteStatus, "unknown");
   assert.equal(opportunityScore(92, merelyNoViewport, 10), 39);
 });
+test("an unsupported competitor flag cannot label a restaurant as a web agency", () => {
+  const o=prospect('<title>Wanted Restaurant</title><meta name="viewport"><h1>Wanted Restaurant</h1><p>Order food online.</p>',{competitor:true});
+  assert.equal(o.status,'review');assert.equal(o.service,'No clear fit');
+  assert.equal(o.reason,'Business classification needs review before outreach.');
+  assert.equal(opportunityScore(95,o),39);
+});
 test("a missing URL needs a business-specific search and confirmed business identity", () => {
   const html='<h1>Restaurant</h1><p>Sandton Restaurant listing</p>';
   assert.equal(prospect(html, {}, { websiteUrl: null }).status, "review");

@@ -431,11 +431,15 @@ export function qualifyOpportunity(input: {
   const commerce = evidence.filter(e => e.kind === "commerce_gap" &&
     /\b(?:order|orders|ordering|payment|payments|checkout|purchase|buy)\b/i.test(e.quote) &&
     /\b(?:call|phone|email|e-mail|whatsapp|send|message|cash|no online|not available online)\b/i.test(e.quote));
-  if (a.targetMatch !== true || a.competitor === true || digitalServiceProvider(input.category)) {
+  const providerConfirmed = digitalServiceProvider(input.category) || digitalServiceProvider(checks.title);
+  if (providerConfirmed) {
     status = "not_fit";
-    reason = a.competitor === true || digitalServiceProvider(input.category)
-      ? "This business provides web, ecommerce or digital marketing services; excluded from Toran's customer prospect list."
-      : "This business does not match the requested business type and location.";
+    reason = "This business provides web, ecommerce or digital marketing services; excluded from Toran's customer prospect list.";
+  } else if (a.competitor === true) {
+    reason = "Business classification needs review before outreach.";
+  } else if (a.targetMatch !== true) {
+    status = "not_fit";
+    reason = "This business does not match the requested business type and location.";
   } else if (focus !== "automation" && (weak || !input.websiteUrl && input.identityConfirmed && (input.officialSearch?.sources.length ?? 0) > 0)) {
     status = "qualified"; service = "Launch";
     websiteStatus = weak ? "weak" : "not_found";

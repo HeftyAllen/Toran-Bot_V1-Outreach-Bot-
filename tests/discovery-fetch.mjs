@@ -71,7 +71,7 @@ globalThis.fetch = async (input, init) => {
       sources=[directory];result={websiteUrl:'',sourceUrl:''};
     }
   }else{
-    assert.equal(name,'lead_review');assert.equal(body.model,'gpt-4o-mini');
+    assert.equal(name,'lead_review');assert.equal(body.model,'gpt-4.1-mini');
     assert.ok(payload.pages.every(p=>fixture(p.url)));
     result={score:95,confidence:'high',serviceFit:'Launch',summary:'Synthetic assessment.',evidence:[],draftSubject:'A potential website opportunity',draftBody:'May we share a website proposal? Let us know to opt out.',address:'',websiteStatus:payload.business.website_url?'healthy':'not_found',targetMatch:true,competitor:false,opportunityReason:'Synthetic observation',opportunityEvidence:[]};
   }
