@@ -55,3 +55,9 @@ matching application code. It adds the opportunity assessment to leads, a
 qualified counter to runs, and the reviewed lead state. Existing server-only
 database policies and permissions remain in force. The migration updates only
 placeholder workspace brand/service/location defaults.
+
+Also apply `qualified_worker_claim` before deploying the matching worker. It
+retires the original job-claim RPC and gives the updated worker a separate claim
+RPC. Older deployments and open browser tabs cannot process campaigns with the
+previous qualification rules. The existing Cron job and Vault entries stay in
+place; no second scheduler is needed.

@@ -23,7 +23,7 @@ const mock=createServer(async(req,res)=>{const url=new URL(req.url,'http://mock'
   else if(table.startsWith('rpc/')){
     let raw='';for await(const chunk of req)raw+=chunk;const input=JSON.parse(raw||'{}');
     if(table==='rpc/bot1_usage_summary')rows={monthEstimatedUsd:0,monthActualUsd:0,monthReservedUsd:0,allTimeEstimatedUsd:0,allTimeActualUsd:0,unconfirmedCount:0,inputTokens:0,outputTokens:0,searchCalls:0,trackingSince:null};
-    else if(table==='rpc/bot1_claim_run'){
+    else if(table==='rpc/bot1_claim_qualified_run'){
       const job=workerEnabled?runs.find(x=>x.status==='running'):undefined;
       if(job){job.lease_token=input.p_token;job.search_rounds??=0;}
       rows=job?[job]:[];

@@ -703,7 +703,7 @@ async function finish(job: Job, status: string, message: string) {
 }
 export async function processNextJob() {
   const token = crypto.randomUUID();
-  const jobs = await db().rpc<Job[]>("bot1_claim_run", { p_token: token });
+  const jobs = await db().rpc<Job[]>("bot1_claim_qualified_run", { p_token: token });
   const job = jobs[0];
   if (!job) return { worked: false };
   try {
